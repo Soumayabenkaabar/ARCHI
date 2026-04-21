@@ -115,8 +115,9 @@ class _DocUI {
   });
 
   factory _DocUI.fromDocument(Document d) {
-    if (d.nom.contains('\x00')) {
-      final parts = d.nom.split('\x00');
+    final _docSep = d.nom.contains('||META||') ? '||META||' : '\x00';
+    if (d.nom.contains('||META||') || d.nom.contains('\x00')) {
+      final parts = d.nom.split(_docSep);
       return _DocUI(
         doc:        d,
         nomAffiche: parts[0],
@@ -142,7 +143,7 @@ class _DocUI {
     required int    version,
     String?         dateDoc,
   }) =>
-      '$nomAffiche\x00$phase\x00$typeLabel\x00$version\x00${dateDoc ?? ''}';
+      '$nomAffiche||META||$phase||META||$typeLabel||META||$version||META||${dateDoc ?? ''}';
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -2178,10 +2179,44 @@ class _AddLivrableDialogState extends State<_AddLivrableDialog> {
 
   @override void dispose() { _nomCtrl.dispose(); _urlCtrl.dispose(); _versionCtrl.dispose(); _dateCtrl.dispose(); super.dispose(); }
 
+  bool _uploading = false;
+
   Future<void> _pickFile() async {
     try {
-      final result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf', 'png', 'jpg', 'jpeg', 'dwg', 'xlsx', 'doc', 'docx']);
-      if (result != null && result.files.isNotEmpty) { final file = result.files.first; setState(() { _fileName = file.name; if (_nomCtrl.text.isEmpty) _nomCtrl.text = file.name.split('.').first; _urlCtrl.text = 'fichier:${file.name}'; }); }
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'png', 'jpg', 'jpeg', 'dwg', 'xlsx', 'doc', 'docx'],
+        withData: true,
+      );
+      if (result == null || result.files.isEmpty) return;
+      final file = result.files.first;
+      setState(() { _fileName = file.name; if (_nomCtrl.text.isEmpty) _nomCtrl.text = file.name.split('.').first; });
+
+      // Upload vers Supabase Storage si bytes disponibles
+      if (file.bytes != null) {
+        setState(() => _uploading = true);
+        try {
+          final ext  = file.name.split('.').last.toLowerCase();
+          final ts   = DateTime.now().millisecondsSinceEpoch;
+          final path = 'documents/${widget.projectId}/${ts}_${file.name}';
+          final mime = ext == 'pdf' ? 'application/pdf'
+              : (ext == 'png' || ext == 'jpg' || ext == 'jpeg') ? 'image/$ext'
+              : 'application/octet-stream';
+
+          await Supabase.instance.client.storage
+              .from('documents')
+              .uploadBinary(path, file.bytes!, fileOptions: FileOptions(contentType: mime, upsert: true));
+
+          final url = Supabase.instance.client.storage.from('documents').getPublicUrl(path);
+          setState(() { _urlCtrl.text = url; _uploading = false; });
+          _snack(context, 'Fichier uploadé ✓', const Color(0xFF10B981));
+        } catch (_) {
+          setState(() { _urlCtrl.text = 'fichier:${file.name}'; _uploading = false; });
+          _snack(context, 'Upload échoué — lien local conservé', const Color(0xFFF59E0B));
+        }
+      } else {
+        _urlCtrl.text = 'fichier:${file.name}';
+      }
     } catch (e) { _snack(context, 'Impossible d\'ouvrir le fichier', kRed); }
   }
 
@@ -2191,16 +2226,48 @@ class _AddLivrableDialogState extends State<_AddLivrableDialog> {
   }
 
   Future<void> _submit() async {
+    // Validation
     final nom = _nomCtrl.text.trim();
-    if (nom.isEmpty)    { _snack(context, 'Nom du document obligatoire', kRed); return; }
-    if (nom.length < 2) { _snack(context, 'Le nom doit contenir au moins 2 caractères', kRed); return; }
-    final version = int.tryParse(_versionCtrl.text.trim()) ?? 1;
-    final nomEncode = _DocUI.encodeNom(nomAffiche: nom, phase: _phase, typeLabel: _typeLabel, version: version, dateDoc: _dateCtrl.text.trim().isEmpty ? null : _dateCtrl.text.trim());
-    final typeFichier = _fileTypeFromLabel(_typeLabel);
-    final url = _urlCtrl.text.trim().isEmpty ? (_fileName != null ? 'fichier:$_fileName' : 'non_defini') : _urlCtrl.text.trim();
-    await DocumentService.addDocument(Document(id: '', projetId: widget.projectId, nom: nomEncode, url: url, type: typeFichier));
-    if (mounted) Navigator.pop(context);
-    widget.onSaved();
+    if (nom.isEmpty) {
+      _snack(context, 'Nom du document obligatoire', kRed);
+      return;
+    }
+
+    // Attendre fin d'upload si en cours
+    if (_uploading) {
+      _snack(context, 'Upload en cours, patientez...', kAccent);
+      return;
+    }
+
+    setState(() => _uploading = true);
+
+    try {
+      final version    = int.tryParse(_versionCtrl.text.trim()) ?? 1;
+      // Encoder le nom avec séparateur null char
+      final nomEncode  = '$nom||META||$_phase||META||$_typeLabel||META||$version||META||${_dateCtrl.text.trim()}';
+      final typeFichier = _fileTypeFromLabel(_typeLabel);
+      final url = _urlCtrl.text.trim().isNotEmpty
+          ? _urlCtrl.text.trim()
+          : (_fileName != null ? 'fichier:$_fileName' : 'non_defini');
+
+      await DocumentService.addDocument(Document(
+        id:       '',
+        projetId: widget.projectId,
+        nom:      nomEncode,
+        url:      url,
+        type:     typeFichier,
+      ));
+
+      if (mounted) {
+        Navigator.pop(context);
+        widget.onSaved();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _uploading = false);
+        _snack(context, 'Erreur : $e', kRed);
+      }
+    }
   }
 
   @override
@@ -2235,10 +2302,54 @@ class _AddLivrableDialogState extends State<_AddLivrableDialog> {
           const SizedBox(height: 14),
           const Text('FICHIER', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5)),
           const SizedBox(height: 6),
-          GestureDetector(onTap: _pickFile, child: AnimatedContainer(duration: const Duration(milliseconds: 150), width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16), decoration: BoxDecoration(color: _fileName != null ? const Color(0xFFEFF6FF) : const Color(0xFFFAFAFA), borderRadius: BorderRadius.circular(10), border: Border.all(color: _fileName != null ? const Color(0xFF3B82F6) : const Color(0xFFE5E7EB))), child: Row(children: [Container(width: 36, height: 36, decoration: BoxDecoration(color: _fileName != null ? const Color(0xFF3B82F6).withOpacity(0.1) : const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(8)), child: Icon(_fileName != null ? LucideIcons.fileCheck : LucideIcons.upload, size: 16, color: _fileName != null ? const Color(0xFF3B82F6) : kTextSub)), const SizedBox(width: 12), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(_fileName ?? 'Cliquez pour joindre un fichier', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: _fileName != null ? kTextMain : kTextSub), overflow: TextOverflow.ellipsis), Text(_fileName != null ? 'Fichier sélectionné ✓' : 'PDF, DWG, XLSX, PNG acceptés', style: TextStyle(fontSize: 11, color: _fileName != null ? const Color(0xFF10B981) : kTextSub))])), if (_fileName != null) GestureDetector(onTap: () => setState(() { _fileName = null; _urlCtrl.clear(); }), child: const Icon(LucideIcons.x, size: 16, color: kTextSub))]))),
+          GestureDetector(
+            onTap: _uploading ? null : _pickFile,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+              decoration: BoxDecoration(
+                color: _uploading ? kAccent.withOpacity(0.05) : _fileName != null ? const Color(0xFFEFF6FF) : const Color(0xFFFAFAFA),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: _uploading ? kAccent.withOpacity(0.4) : _fileName != null ? const Color(0xFF3B82F6) : const Color(0xFFE5E7EB)),
+              ),
+              child: Row(children: [
+                Container(
+                  width: 36, height: 36,
+                  decoration: BoxDecoration(
+                    color: _uploading ? kAccent.withOpacity(0.1) : _fileName != null ? const Color(0xFF3B82F6).withOpacity(0.1) : const Color(0xFFF3F4F6),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: _uploading
+                      ? const Padding(padding: EdgeInsets.all(8), child: CircularProgressIndicator(strokeWidth: 2, color: kAccent))
+                      : Icon(_fileName != null ? LucideIcons.fileCheck : LucideIcons.upload, size: 16, color: _fileName != null ? const Color(0xFF3B82F6) : kTextSub),
+                ),
+                const SizedBox(width: 12),
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(
+                    _uploading ? 'Upload en cours...' : (_fileName ?? 'Cliquez pour joindre un fichier'),
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: _uploading ? kAccent : _fileName != null ? kTextMain : kTextSub),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    _uploading ? 'Envoi vers Supabase Storage...'
+                        : _fileName != null
+                            ? (_urlCtrl.text.startsWith('http') ? 'Uploadé ✓ — accessible en ligne' : 'Fichier local (pas de réseau)')
+                            : 'PDF, DWG, XLSX, PNG, JPG acceptés',
+                    style: TextStyle(fontSize: 11, color: _uploading ? kAccent : _fileName != null && _urlCtrl.text.startsWith('http') ? const Color(0xFF10B981) : kTextSub),
+                  ),
+                ])),
+                if (_fileName != null && !_uploading)
+                  GestureDetector(
+                    onTap: () => setState(() { _fileName = null; _urlCtrl.clear(); }),
+                    child: const Icon(LucideIcons.x, size: 16, color: kTextSub),
+                  ),
+              ]),
+            ),
+          ),
           if (_fileName == null) ...[const SizedBox(height: 12), _DField(icon: LucideIcons.link, label: 'OU URL DU FICHIER', hint: 'https://...', controller: _urlCtrl)],
         ])),
-        Container(padding: const EdgeInsets.fromLTRB(20, 12, 20, 20), decoration: const BoxDecoration(border: Border(top: BorderSide(color: Color(0xFFE5E7EB)))), child: Row(children: [Expanded(child: OutlinedButton(onPressed: () => Navigator.pop(context), style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 13), side: const BorderSide(color: Color(0xFFD1D5DB)), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))), child: const Text('Annuler', style: TextStyle(color: kTextSub, fontWeight: FontWeight.w600)))), const SizedBox(width: 10), Expanded(child: ElevatedButton(onPressed: _submit, style: ElevatedButton.styleFrom(backgroundColor: kAccent, elevation: 0, padding: const EdgeInsets.symmetric(vertical: 13), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))), child: const Text('Ajouter', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700))))])),
+        Container(padding: const EdgeInsets.fromLTRB(20, 12, 20, 20), decoration: const BoxDecoration(border: Border(top: BorderSide(color: Color(0xFFE5E7EB)))), child: Row(children: [Expanded(child: OutlinedButton(onPressed: () => Navigator.pop(context), style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 13), side: const BorderSide(color: Color(0xFFD1D5DB)), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))), child: const Text('Annuler', style: TextStyle(color: kTextSub, fontWeight: FontWeight.w600)))), const SizedBox(width: 10), Expanded(child: ElevatedButton(onPressed: _uploading ? null : _submit, style: ElevatedButton.styleFrom(backgroundColor: kAccent, elevation: 0, padding: const EdgeInsets.symmetric(vertical: 13), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))), child: _uploading ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text('Ajouter', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700))))])),
       ]))),
     );
   }
@@ -2295,91 +2406,403 @@ class _SuiviPhotosTab extends StatefulWidget {
 class _SuiviPhotosTabState extends State<_SuiviPhotosTab> {
   int _subTab = 0;
 
-  final List<Map<String, dynamic>> _photos   = [];
-  final List<Map<String, dynamic>> _reserves = [
-    {'titre': 'Passage gaine technique manquant', 'date': '07/04/2026', 'statut': 'a_faire', 'x': 0.42, 'y': 0.55},
-    {'titre': 'Défaut de finition sur le mur porteur', 'date': '06/04/2026', 'statut': 'a_faire', 'x': 0.70, 'y': 0.30},
-  ];
-  final List<Map<String, dynamic>> _crcs = [
-    {'titre': 'Rapport de visite - Semaine 14', 'date': '6 avril 2026', 'auteur': 'Ahmed Bennani', 'statut': 'conforme'},
-    {'titre': 'Rapport de visite - Semaine 13', 'date': '30 mars 2026', 'auteur': 'Ahmed Bennani', 'statut': 'attention'},
-  ];
-  final List<Map<String, dynamic>> _actualites = [
-    {'type': 'Progrès', 'date': '5 avr.', 'contenu': 'Les fondations sont terminées dans les délais. Béton de bonne qualité.', 'auteur': 'Ahmed Bennani'},
-  ];
+  // ── Pointage ──────────────────────────────────────────────────────────────
+  List<Map<String, dynamic>> _defauts   = [];
+  List<Map<String, dynamic>> _documents = []; // plans disponibles
+  Map<String, dynamic>?      _planActif;
+  bool _loadingDefauts = true;
 
-  Future<void> _pickPhoto() async {
-    try {
-      final result = await FilePicker.platform.pickFiles(type: FileType.image, allowMultiple: true, withData: true);
-      if (result != null && result.files.isNotEmpty) {
-        setState(() { for (final f in result.files) { _photos.add({'name': f.name, 'bytes': f.bytes, 'date': DateTime.now().toString().substring(0, 10)}); } });
-        _snack(context, '${result.files.length} photo(s) ajoutée(s)', kAccent);
-      }
-    } catch (e) { _snack(context, 'Impossible d\'ouvrir les photos', kRed); }
+  // ── Galerie ───────────────────────────────────────────────────────────────
+  List<Map<String, dynamic>> _photos = [];
+  bool _loadingPhotos = true;
+  bool _uploadingPhoto = false;
+
+  // ── CRC & Actualités ─────────────────────────────────────────────────────
+  List<Map<String, dynamic>> _crcs       = [];
+  List<Map<String, dynamic>> _actualites = [];
+  bool _loadingCRC = true;
+
+  @override
+  void initState() { super.initState(); _loadAll(); }
+
+  Future<void> _loadAll() async {
+    await Future.wait([_loadDefauts(), _loadDocuments(), _loadPhotos(), _loadCRC()]);
   }
 
-  void _showAddReserveDialog(double rx, double ry) {
+  // ── Loaders ───────────────────────────────────────────────────────────────
+  Future<void> _loadDefauts() async {
+    try {
+      final data = await Supabase.instance.client
+          .from('defauts')
+          .select()
+          .eq('projet_id', widget.project.id)
+          .order('created_at', ascending: false);
+      if (mounted) setState(() { _defauts = List<Map<String,dynamic>>.from(data); _loadingDefauts = false; });
+    } catch (_) { if (mounted) setState(() => _loadingDefauts = false); }
+  }
+
+  Future<void> _loadDocuments() async {
+    try {
+      final data = await Supabase.instance.client
+          .from('documents')
+          .select()
+          .eq('projet_id', widget.project.id)
+          .order('uploaded_at', ascending: false);
+      if (mounted) setState(() => _documents = List<Map<String,dynamic>>.from(data));
+    } catch (_) {}
+  }
+
+  Future<void> _loadPhotos() async {
+    try {
+      final data = await Supabase.instance.client
+          .from('photos_chantier')
+          .select()
+          .eq('projet_id', widget.project.id)
+          .order('uploaded_at', ascending: false); // plus récentes en premier
+      if (mounted) setState(() { _photos = List<Map<String,dynamic>>.from(data); _loadingPhotos = false; });
+    } catch (_) { if (mounted) setState(() => _loadingPhotos = false); }
+  }
+
+  Future<void> _loadCRC() async {
+    try {
+      final crcs = await Supabase.instance.client
+          .from('comptes_rendus')
+          .select()
+          .eq('projet_id', widget.project.id)
+          .order('created_at', ascending: false);
+      final acts = await Supabase.instance.client
+          .from('actualites_chantier')
+          .select()
+          .eq('projet_id', widget.project.id)
+          .order('created_at', ascending: false);
+      if (mounted) setState(() {
+        _crcs       = List<Map<String,dynamic>>.from(crcs);
+        _actualites = List<Map<String,dynamic>>.from(acts);
+        _loadingCRC = false;
+      });
+    } catch (_) { if (mounted) setState(() => _loadingCRC = false); }
+  }
+
+  // ── Actions Photo ─────────────────────────────────────────────────────────
+  Future<void> _ajouterPhotos() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image, allowMultiple: true, withData: true,
+      );
+      if (result == null || result.files.isEmpty) return;
+      setState(() => _uploadingPhoto = true);
+      int ok = 0;
+      for (final file in result.files) {
+        if (file.bytes == null) continue;
+        try {
+          final ts   = DateTime.now().millisecondsSinceEpoch;
+          final path = 'chantier/${widget.project.id}/${ts}_${file.name}';
+          await Supabase.instance.client.storage
+              .from('photos-chantier')
+              .uploadBinary(path, file.bytes!, fileOptions: FileOptions(contentType: 'image/jpeg', upsert: true));
+          final url = Supabase.instance.client.storage.from('photos-chantier').getPublicUrl(path);
+          await Supabase.instance.client.from('photos_chantier').insert({
+            'projet_id': widget.project.id,
+            'nom':       file.name,
+            'url':       url,
+          });
+          ok++;
+        } catch (_) {}
+      }
+      if (ok > 0) _snack(context, '$ok photo(s) ajoutée(s) ✓', const Color(0xFF10B981));
+      else        _snack(context, "Erreur lors de l'upload", kRed);
+      await _loadPhotos();
+    } catch (_) {
+      _snack(context, "Impossible d'ouvrir les photos", kRed);
+    } finally {
+      if (mounted) setState(() => _uploadingPhoto = false);
+    }
+  }
+
+  Future<void> _supprimerPhoto(Map<String, dynamic> photo) async {
+    try {
+      await Supabase.instance.client.from('photos_chantier').delete().eq('id', photo['id']);
+      await _loadPhotos();
+      _snack(context, 'Photo supprimée', kRed);
+    } catch (_) { _snack(context, 'Erreur suppression', kRed); }
+  }
+
+  // ── Actions Défaut ────────────────────────────────────────────────────────
+  void _showAddDefautDialog(double rx, double ry, String docId, String docNom) {
     final ctrl = TextEditingController();
     showDialog(context: context, builder: (_) => Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 380), child: Column(mainAxisSize: MainAxisSize.min, children: [
-        _DialogHeader(icon: LucideIcons.mapPin, title: 'Nouvelle réserve', subtitle: 'Décrivez le problème à corriger'),
+        _DialogHeader(icon: LucideIcons.mapPin, title: 'Nouveau pointage', subtitle: 'Décrivez le défaut ou la remarque'),
         Padding(padding: const EdgeInsets.all(20), child: _DField(icon: LucideIcons.alertTriangle, label: 'DESCRIPTION *', hint: 'Ex: Fissure sur le mur nord', controller: ctrl, maxLines: 2)),
-        _DialogActions(onCancel: () => Navigator.pop(context), onConfirm: () {
-          final t = ctrl.text.trim(); if (t.isEmpty) { _snack(context, 'Description obligatoire', kRed); return; }
-          setState(() { _reserves.add({'titre': t, 'date': DateTime.now().toString().substring(0, 10), 'statut': 'a_faire', 'x': rx, 'y': ry}); });
-          Navigator.pop(context); _snack(context, 'Réserve ajoutée', kAccent);
+        _DialogActions(onCancel: () => Navigator.pop(context), onConfirm: () async {
+          final t = ctrl.text.trim();
+          if (t.isEmpty) { _snack(context, 'Description obligatoire', kRed); return; }
+          try {
+            await Supabase.instance.client.from('defauts').insert({
+              'projet_id':    widget.project.id,
+              'document_id':  docId,
+              'document_nom': docNom,
+              'titre':        t,
+              'statut':       'a_faire',
+              'x':            rx,
+              'y':            ry,
+            });
+            Navigator.pop(context);
+            _snack(context, 'Pointage ajouté', kAccent);
+            await _loadDefauts();
+          } catch (_) { _snack(context, 'Erreur sauvegarde', kRed); }
         }, label: 'Ajouter'),
       ])),
     ));
   }
 
+  Future<void> _toggleDefautStatut(Map<String, dynamic> d) async {
+    final newStatut = d['statut'] == 'regle' ? 'a_faire' : 'regle';
+    try {
+      await Supabase.instance.client.from('defauts').update({'statut': newStatut}).eq('id', d['id']);
+      await _loadDefauts();
+    } catch (_) {}
+  }
+
+  Future<void> _supprimerDefaut(Map<String, dynamic> d) async {
+    try {
+      await Supabase.instance.client.from('defauts').delete().eq('id', d['id']);
+      await _loadDefauts();
+      _snack(context, 'Pointage supprimé', kRed);
+    } catch (_) {}
+  }
+
+  // ── Actions CRC ───────────────────────────────────────────────────────────
   void _showAddCrcDialog() {
-    final titreCtrl = TextEditingController(); String statut = 'conforme';
+    final titreCtrl   = TextEditingController();
+    final contenuCtrl = TextEditingController();
+    String statut = 'conforme';
     showDialog(context: context, builder: (_) => StatefulBuilder(builder: (ctx, sd) => Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 420), child: Column(mainAxisSize: MainAxisSize.min, children: [
-        _DialogHeader(icon: LucideIcons.clipboardList, title: 'Nouveau CRC', subtitle: 'Compte-Rendu de Chantier'),
-        Padding(padding: const EdgeInsets.all(20), child: Column(children: [
-          _DField(icon: LucideIcons.fileText, label: 'TITRE *', hint: 'Rapport de visite - Semaine 15', controller: titreCtrl),
+      child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 480), child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Container(
+          decoration: BoxDecoration(color: const Color(0xFF3B82F6).withOpacity(0.08), borderRadius: const BorderRadius.vertical(top: Radius.circular(16)), border: Border(bottom: BorderSide(color: const Color(0xFF3B82F6).withOpacity(0.15)))),
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+          child: Row(children: [
+            Container(width: 42, height: 42, decoration: BoxDecoration(color: const Color(0xFF3B82F6).withOpacity(0.12), borderRadius: BorderRadius.circular(10)), child: const Icon(LucideIcons.clipboardList, color: Color(0xFF3B82F6), size: 20)),
+            const SizedBox(width: 12),
+            const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Compte-Rendu de Chantier', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: Color(0xFF3B82F6))),
+              Text('Rapport officiel de visite ou de réunion', style: TextStyle(color: kTextSub, fontSize: 12)),
+            ])),
+          ]),
+        ),
+        Padding(padding: const EdgeInsets.all(20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          _DField(icon: LucideIcons.fileText, label: 'TITRE DU RAPPORT *', hint: 'Ex: Rapport de visite — Semaine 15', controller: titreCtrl),
+          const SizedBox(height: 12),
+          _DField(icon: LucideIcons.alignLeft, label: 'CONTENU / OBSERVATIONS', hint: 'Décrivez les observations, décisions et actions à prendre...', controller: contenuCtrl, maxLines: 4),
           const SizedBox(height: 14),
-          const Align(alignment: Alignment.centerLeft, child: Text('STATUT', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5))),
+          const Text('ÉTAT DU CHANTIER', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5)),
           const SizedBox(height: 8),
-          Row(children: [for (final s in ['conforme', 'attention', 'critique']) Expanded(child: Padding(padding: EdgeInsets.only(right: s == 'critique' ? 0 : 8), child: GestureDetector(onTap: () => sd(() => statut = s), child: AnimatedContainer(duration: const Duration(milliseconds: 150), padding: const EdgeInsets.symmetric(vertical: 9), decoration: BoxDecoration(color: statut == s ? _crcColor(s).withOpacity(0.12) : Colors.white, borderRadius: BorderRadius.circular(10), border: Border.all(color: statut == s ? _crcColor(s) : const Color(0xFFE5E7EB), width: statut == s ? 2 : 1)), child: Text(_crcLabel(s), textAlign: TextAlign.center, style: TextStyle(fontSize: 11, fontWeight: statut == s ? FontWeight.w700 : FontWeight.w500, color: statut == s ? _crcColor(s) : kTextSub))))))],
-          ),
+          Row(children: [
+            for (final s in ['conforme', 'attention', 'critique'])
+              Expanded(child: Padding(
+                padding: EdgeInsets.only(right: s == 'critique' ? 0 : 8),
+                child: GestureDetector(onTap: () => sd(() => statut = s), child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  decoration: BoxDecoration(
+                    color: statut == s ? _crcColor(s).withOpacity(0.12) : Colors.white,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: statut == s ? _crcColor(s) : const Color(0xFFE5E7EB), width: statut == s ? 2 : 1),
+                  ),
+                  child: Column(children: [
+                    Icon(s == 'conforme' ? LucideIcons.checkCircle : s == 'attention' ? LucideIcons.alertCircle : LucideIcons.xCircle, size: 16, color: statut == s ? _crcColor(s) : kTextSub),
+                    const SizedBox(height: 4),
+                    Text(_crcLabel(s), style: TextStyle(fontSize: 11, fontWeight: statut == s ? FontWeight.w700 : FontWeight.w500, color: statut == s ? _crcColor(s) : kTextSub)),
+                  ]),
+                )),
+              )),
+          ]),
         ])),
-        _DialogActions(onCancel: () => Navigator.pop(ctx), onConfirm: () {
-          final t = titreCtrl.text.trim(); if (t.isEmpty) { _snack(ctx, 'Titre obligatoire', kRed); return; }
-          final now = DateTime.now();
-          setState(() { _crcs.insert(0, {'titre': t, 'date': '${now.day} ${_monthFr(now.month)} ${now.year}', 'auteur': widget.project.chef, 'statut': statut}); });
-          Navigator.pop(ctx); _snack(context, 'CRC ajouté', kAccent);
-        }, label: 'Créer'),
-      ])),
+        Container(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+          decoration: const BoxDecoration(border: Border(top: BorderSide(color: Color(0xFFE5E7EB)))),
+          child: Row(children: [
+            Expanded(child: OutlinedButton(onPressed: () => Navigator.pop(ctx), style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12), side: const BorderSide(color: Color(0xFFD1D5DB)), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))), child: const Text('Annuler', style: TextStyle(color: kTextSub)))),
+            const SizedBox(width: 10),
+            Expanded(child: ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF3B82F6), elevation: 0, padding: const EdgeInsets.symmetric(vertical: 12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+              onPressed: () async {
+                final titre = titreCtrl.text.trim();
+                if (titre.isEmpty) { _snack(ctx, 'Titre obligatoire', kRed); return; }
+                final now = DateTime.now();
+                try {
+                  await Supabase.instance.client.from('comptes_rendus').insert({
+                    'projet_id': widget.project.id,
+                    'titre':     titre,
+                    'contenu':   contenuCtrl.text.trim(),
+                    'statut':    statut,
+                    'auteur':    widget.project.chef,
+                  });
+                  Navigator.pop(ctx);
+                  _snack(context, 'CRC ajouté ✓', const Color(0xFF3B82F6));
+                  await _loadCRC();
+                } catch (_) { _snack(ctx, 'Erreur sauvegarde', kRed); }
+              },
+              child: const Text('Créer le rapport', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+            )),
+          ]),
+        ),
+      ]))),
     )));
   }
 
-  static Color _crcColor(String s) { switch (s) { case 'conforme': return const Color(0xFF10B981); case 'attention': return const Color(0xFFF59E0B); default: return kRed; } }
-  static String _crcLabel(String s) { switch (s) { case 'conforme': return 'Conforme'; case 'attention': return 'Attention'; default: return 'Critique'; } }
-  static String _monthFr(int m) { const months = ['jan','fév','mars','avr','mai','juin','juil','août','sept','oct','nov','déc']; return months[m - 1]; }
+  void _showAddActualiteDialog() {
+    final contenuCtrl = TextEditingController();
+    String type = 'Progrès';
+    const types = ['Progrès', 'Problème', 'Décision', 'Livraison', 'Sécurité', 'Note'];
+    const typeIcons = {
+      'Progrès':  LucideIcons.trendingUp,
+      'Problème': LucideIcons.alertTriangle,
+      'Décision': LucideIcons.checkSquare,
+      'Livraison':LucideIcons.package,
+      'Sécurité': LucideIcons.shieldAlert,
+      'Note':     LucideIcons.stickyNote,
+    };
+    final typeColors = {
+      'Progrès':  const Color(0xFF10B981),
+      'Problème': kRed,
+      'Décision': const Color(0xFF8B5CF6),
+      'Livraison':const Color(0xFF3B82F6),
+      'Sécurité': const Color(0xFFF59E0B),
+      'Note':     const Color(0xFF6B7280),
+    };
+    showDialog(context: context, builder: (_) => StatefulBuilder(builder: (ctx, sd) => Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 480), child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Container(
+          decoration: BoxDecoration(color: const Color(0xFF10B981).withOpacity(0.08), borderRadius: const BorderRadius.vertical(top: Radius.circular(16)), border: Border(bottom: BorderSide(color: const Color(0xFF10B981).withOpacity(0.15)))),
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+          child: Row(children: [
+            Container(width: 42, height: 42, decoration: BoxDecoration(color: const Color(0xFF10B981).withOpacity(0.12), borderRadius: BorderRadius.circular(10)), child: const Icon(LucideIcons.rss, color: Color(0xFF10B981), size: 20)),
+            const SizedBox(width: 12),
+            const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text("Fil d'actualité", style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: Color(0xFF10B981))),
+              Text('Note rapide, info informelle ou observation terrain', style: TextStyle(color: kTextSub, fontSize: 12)),
+            ])),
+          ]),
+        ),
+        Padding(padding: const EdgeInsets.all(20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('TYPE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5)),
+          const SizedBox(height: 8),
+          Wrap(spacing: 8, runSpacing: 8, children: types.map((t) {
+            final isSelected = type == t;
+            final color = typeColors[t]!;
+            final icon  = typeIcons[t]!;
+            return GestureDetector(onTap: () => sd(() => type = t), child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(color: isSelected ? color.withOpacity(0.12) : Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: isSelected ? color : const Color(0xFFE5E7EB), width: isSelected ? 2 : 1)),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, size: 12, color: isSelected ? color : kTextSub), const SizedBox(width: 5), Text(t, style: TextStyle(fontSize: 12, fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500, color: isSelected ? color : kTextSub))]),
+            ));
+          }).toList()),
+          const SizedBox(height: 14),
+          _DField(icon: LucideIcons.messageSquare, label: 'NOTE *', hint: 'Ex: Les fondations sont terminées, béton de bonne qualité...', controller: contenuCtrl, maxLines: 3),
+        ])),
+        Container(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+          decoration: const BoxDecoration(border: Border(top: BorderSide(color: Color(0xFFE5E7EB)))),
+          child: Row(children: [
+            Expanded(child: OutlinedButton(onPressed: () => Navigator.pop(ctx), style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12), side: const BorderSide(color: Color(0xFFD1D5DB)), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))), child: const Text('Annuler', style: TextStyle(color: kTextSub)))),
+            const SizedBox(width: 10),
+            Expanded(child: ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF10B981), elevation: 0, padding: const EdgeInsets.symmetric(vertical: 12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+              onPressed: () async {
+                final c = contenuCtrl.text.trim();
+                if (c.isEmpty) { _snack(ctx, 'Note obligatoire', kRed); return; }
+                try {
+                  await Supabase.instance.client.from('actualites_chantier').insert({
+                    'projet_id': widget.project.id,
+                    'type':      type,
+                    'contenu':   c,
+                    'auteur':    widget.project.chef,
+                  });
+                  Navigator.pop(ctx);
+                  _snack(context, 'Actualité publiée ✓', const Color(0xFF10B981));
+                  await _loadCRC();
+                } catch (_) { _snack(ctx, 'Erreur sauvegarde', kRed); }
+              },
+              child: const Text('Publier', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+            )),
+          ]),
+        ),
+      ]))),
+    )));
+  }
 
+  static Color _crcColor(String s) => s == 'conforme' ? const Color(0xFF10B981) : s == 'attention' ? const Color(0xFFF59E0B) : kRed;
+  static String _crcLabel(String s) => s == 'conforme' ? 'Conforme' : s == 'attention' ? 'Attention' : 'Critique';
+  static String _monthFr(int m) { const months = ['jan','fév','mars','avr','mai','juin','juil','août','sept','oct','nov','déc']; return months[m-1]; }
+  static String _formatDate(String iso) {
+    try {
+      final d = DateTime.parse(iso).toLocal();
+      return '${d.day} ${_monthFr(d.month)} ${d.year}';
+    } catch (_) { return iso; }
+  }
+
+  // ── BUILD ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.of(context).size.width < 800;
     final pad = isMobile ? 16.0 : 28.0;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // Header + sous-onglets
       Container(color: kCardBg, padding: EdgeInsets.fromLTRB(pad, 20, pad, 0), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('Suivi de chantier & Visites', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: kTextMain)),
             SizedBox(height: 3),
-            Text('Remarques sur plan, photos et comptes-rendus d\'exécution', style: TextStyle(color: kTextSub, fontSize: 12)),
+            Text('Pointage sur plans, photos et comptes-rendus', style: TextStyle(color: kTextSub, fontSize: 12)),
           ])),
-          if (_subTab == 2) ...[OutlinedButton.icon(onPressed: _showAddCrcDialog, icon: const Icon(LucideIcons.filePlus, size: 13), label: const Text('Nouveau compte-rendu', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)), style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFFD1D5DB)), padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)))), const SizedBox(width: 8)],
-          ElevatedButton.icon(onPressed: _pickPhoto, icon: const Icon(LucideIcons.camera, size: 14, color: Colors.white), label: const Text('Ajouter des photos', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12)), style: ElevatedButton.styleFrom(backgroundColor: kAccent, elevation: 0, padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)))),
+          // Bouton contextuel selon l'onglet actif
+          if (_subTab == 0)
+            const SizedBox.shrink()
+          else if (_subTab == 1)
+            ElevatedButton.icon(
+              onPressed: _uploadingPhoto ? null : _ajouterPhotos,
+              icon: _uploadingPhoto
+                  ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Icon(LucideIcons.camera, size: 14, color: Colors.white),
+              label: const Text('Ajouter', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12)),
+              style: ElevatedButton.styleFrom(backgroundColor: kAccent, elevation: 0, padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+            )
+          else ...[
+            OutlinedButton.icon(
+              onPressed: _showAddActualiteDialog,
+              icon: const Icon(LucideIcons.rss, size: 13, color: Color(0xFF10B981)),
+              label: const Text('Actualité', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF10B981))),
+              style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFF10B981)), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+            ),
+            const SizedBox(width: 8),
+            ElevatedButton.icon(
+              onPressed: _showAddCrcDialog,
+              icon: const Icon(LucideIcons.clipboardList, size: 13, color: Colors.white),
+              label: const Text('Rapport CRC', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12)),
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF3B82F6), elevation: 0, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+            ),
+          ],
         ]),
         const SizedBox(height: 16),
+        // Sous-onglets
         Container(padding: const EdgeInsets.all(4), decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(12)), child: Row(children: [
-          for (int i = 0; i < 3; i++) Expanded(child: GestureDetector(onTap: () => setState(() => _subTab = i), child: AnimatedContainer(duration: const Duration(milliseconds: 180), padding: const EdgeInsets.symmetric(vertical: 9), decoration: BoxDecoration(color: _subTab == i ? Colors.white : Colors.transparent, borderRadius: BorderRadius.circular(9), boxShadow: _subTab == i ? [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 4, offset: const Offset(0, 1))] : null), child: Text(['Pointage sur plan (Réserves)', 'Galerie Photos', 'Comptes-Rendus (CRC)'][i], textAlign: TextAlign.center, style: TextStyle(fontSize: 12, fontWeight: _subTab == i ? FontWeight.w700 : FontWeight.w500, color: _subTab == i ? kTextMain : kTextSub))))),
+          for (int i = 0; i < 3; i++)
+            Expanded(child: GestureDetector(onTap: () => setState(() => _subTab = i), child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              padding: const EdgeInsets.symmetric(vertical: 9),
+              decoration: BoxDecoration(color: _subTab == i ? Colors.white : Colors.transparent, borderRadius: BorderRadius.circular(9), boxShadow: _subTab == i ? [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 4, offset: const Offset(0, 1))] : null),
+              child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Icon([LucideIcons.mapPin, LucideIcons.image, LucideIcons.clipboardList][i], size: 13, color: _subTab == i ? kTextMain : kTextSub),
+                const SizedBox(width: 6),
+                Text(['Pointage', 'Photos', 'Rapports & Actualités'][i], style: TextStyle(fontSize: 12, fontWeight: _subTab == i ? FontWeight.w700 : FontWeight.w500, color: _subTab == i ? kTextMain : kTextSub)),
+              ]),
+            ))),
         ])),
         const SizedBox(height: 12),
       ])),
@@ -2387,103 +2810,492 @@ class _SuiviPhotosTabState extends State<_SuiviPhotosTab> {
     ]);
   }
 
-  Widget _buildSubTab(double pad) { switch (_subTab) { case 0: return _buildPointage(pad); case 1: return _buildGalerie(pad); default: return _buildCRC(pad); } }
-
-  Widget _buildPointage(double pad) {
-    return SingleChildScrollView(padding: EdgeInsets.fromLTRB(pad, 16, pad, pad + 20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Container(padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: const Color(0xFFE5E7EB)), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8, offset: const Offset(0, 2))]), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: kRed.withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: const Icon(LucideIcons.mapPin, size: 16, color: kRed)), const SizedBox(width: 12), const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Inspection visuelle des défauts', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: kTextMain)), SizedBox(height: 2), Text('Cliquez sur le plan pour ajouter rapidement une remarque ou lever une réserve.', style: TextStyle(color: kTextSub, fontSize: 11))]))]),
-        const SizedBox(height: 16),
-        LayoutBuilder(builder: (ctx, constraints) {
-          final planW = constraints.maxWidth < 600 ? constraints.maxWidth : constraints.maxWidth * 0.55;
-          final listW = constraints.maxWidth - planW - 16;
-          final isWide = constraints.maxWidth >= 600;
-          return isWide ? Row(crossAxisAlignment: CrossAxisAlignment.start, children: [SizedBox(width: planW, child: _buildPlanWidget(planW)), const SizedBox(width: 16), SizedBox(width: listW, child: _buildReservesList())]) : Column(children: [_buildPlanWidget(planW), const SizedBox(height: 16), _buildReservesList()]);
-        }),
-      ])),
-    ]));
+  Widget _buildSubTab(double pad) {
+    switch (_subTab) {
+      case 0: return _buildPointage(pad);
+      case 1: return _buildGalerie(pad);
+      default: return _buildCRC(pad);
+    }
   }
 
-  Widget _buildPlanWidget(double planW) {
-    final planH = planW * 0.75;
-    return GestureDetector(
-      onTapDown: (details) { final rx = details.localPosition.dx / planW; final ry = details.localPosition.dy / planH; _showAddReserveDialog(rx.clamp(0.0, 1.0), ry.clamp(0.0, 1.0)); },
-      child: Stack(children: [
-        Container(width: planW, height: planH, decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0xFFE5E7EB))), child: ClipRRect(borderRadius: BorderRadius.circular(10), child: CustomPaint(painter: _FloorPlanPainter(), size: Size(planW, planH)))),
-        ..._reserves.asMap().entries.map((e) { final i = e.key; final r = e.value; final x = (r['x'] as double) * planW; final y = (r['y'] as double) * planH; return Positioned(left: x - 14, top: y - 14, child: GestureDetector(onTap: () => _snack(context, r['titre'], kRed), child: Container(width: 28, height: 28, decoration: BoxDecoration(color: kRed, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2), boxShadow: [BoxShadow(color: kRed.withOpacity(0.4), blurRadius: 6)]), child: Center(child: Text('${i + 1}', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800)))))); }),
-        Positioned(bottom: 8, left: 0, right: 0, child: Center(child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: Colors.black.withOpacity(0.5), borderRadius: BorderRadius.circular(20)), child: const Text('Tap pour pointer une réserve', style: TextStyle(color: Colors.white, fontSize: 10))))),
+  // ── POINTAGE ──────────────────────────────────────────────────────────────
+  Widget _buildPointage(double pad) {
+    // Plans disponibles = documents de type Plan
+    final plans = _documents.where((d) {
+      final nom = (d['nom'] as String? ?? '');
+      final isEncoded = nom.contains('||META||') || nom.contains('');
+      if (!isEncoded) return true;
+      final parts = nom.contains('||META||') ? nom.split('||META||') : nom.split('');
+      return parts.length > 2 && parts[2] == 'Plan';
+    }).toList();
+
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(pad, 16, pad, pad + 20),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+
+        // ── Liste des plans ───────────────────────────────────────────────
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), border: Border.all(color: const Color(0xFFE5E7EB))),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Container(padding: const EdgeInsets.all(7), decoration: BoxDecoration(color: kRed.withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: const Icon(LucideIcons.mapPin, size: 15, color: kRed)),
+              const SizedBox(width: 10),
+              const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('Plans & pointages', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: kTextMain)),
+                Text('Sélectionnez un plan puis cliquez pour ajouter un pointage', style: TextStyle(fontSize: 11, color: kTextSub)),
+              ])),
+            ]),
+            const SizedBox(height: 14),
+            if (plans.isEmpty)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 24),
+                decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0xFFE5E7EB))),
+                child: Column(children: [
+                  Icon(LucideIcons.fileX, size: 28, color: kTextSub.withOpacity(0.4)),
+                  const SizedBox(height: 8),
+                  const Text('Aucun plan disponible', style: TextStyle(color: kTextSub, fontSize: 13, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 4),
+                  const Text("Ajoutez des plans dans l'onglet Documents", style: TextStyle(color: kTextSub, fontSize: 11)),
+                ]),
+              )
+            else ...[
+              // Sélecteur de plans — grille de cartes avec miniature
+              LayoutBuilder(builder: (ctx2, cs2) {
+                final cardW = (cs2.maxWidth / (cs2.maxWidth > 600 ? 3 : 2) - 8).clamp(120.0, 220.0);
+                return Wrap(spacing: 10, runSpacing: 10, children: plans.map((doc) {
+                  final nomRaw2 = (doc['nom'] as String? ?? '');
+                  final nom     = nomRaw2.contains('||META||') ? nomRaw2.split('||META||')[0]
+                                : nomRaw2.contains('')     ? nomRaw2.split('')[0]
+                                : nomRaw2;
+                  final url     = (doc['url'] as String? ?? '');
+                  final hasImg  = url.startsWith('http') && (url.contains('.png') || url.contains('.jpg') || url.contains('.jpeg') || url.contains('.webp'));
+                  final isActive = _planActif?['id'] == doc['id'];
+                  final pinCount = _defauts.where((d) => d['document_id'] == doc['id']).length;
+
+                  return GestureDetector(
+                    onTap: () => setState(() => _planActif = isActive ? null : doc),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      width: cardW,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: isActive ? kAccent : const Color(0xFFE5E7EB),
+                          width: isActive ? 2 : 1,
+                        ),
+                        boxShadow: isActive ? [BoxShadow(color: kAccent.withOpacity(0.2), blurRadius: 8, offset: const Offset(0, 2))] : [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 4)],
+                      ),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        // Miniature
+                        ClipRRect(
+                          borderRadius: const BorderRadius.vertical(top: Radius.circular(11)),
+                          child: SizedBox(
+                            height: cardW * 0.65,
+                            width: cardW,
+                            child: hasImg
+                                ? Image.network(url, fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => _PlanPlaceholder(isActive: isActive))
+                                : _PlanPlaceholder(isActive: isActive),
+                          ),
+                        ),
+                        // Info
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(nom.isEmpty ? 'Plan sans nom' : nom,
+                                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700,
+                                    color: isActive ? kAccent : kTextMain),
+                                overflow: TextOverflow.ellipsis),
+                            const SizedBox(height: 4),
+                            Row(children: [
+                              if (pinCount > 0) ...[
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(color: kRed.withOpacity(0.1), borderRadius: BorderRadius.circular(6)),
+                                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                    const Icon(LucideIcons.mapPin, size: 9, color: kRed),
+                                    const SizedBox(width: 3),
+                                    Text('$pinCount', style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: kRed)),
+                                  ]),
+                                ),
+                                const SizedBox(width: 6),
+                              ],
+                              const Spacer(),
+                              if (url.startsWith('http'))
+                                GestureDetector(
+                                  onTap: () async {
+                                    final uri = Uri.tryParse(url);
+                                    if (uri != null) try { await launchUrl(uri, mode: LaunchMode.externalApplication); } catch (_) {}
+                                  },
+                                  child: const Icon(LucideIcons.externalLink, size: 13, color: kTextSub),
+                                ),
+                            ]),
+                          ]),
+                        ),
+                      ]),
+                    ),
+                  );
+                }).toList());
+              }),
+              const SizedBox(height: 14),
+
+              // Zone de pointage si un plan est sélectionné
+              if (_planActif != null) _buildZonePointage(_planActif!),
+            ],
+          ]),
+        ),
+
+        const SizedBox(height: 16),
+
+        // ── Liste des défauts ─────────────────────────────────────────────
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), border: Border.all(color: const Color(0xFFE5E7EB))),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Text('LISTE DES POINTAGES (${_defauts.length})', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5)),
+              const Spacer(),
+              if (_defauts.isNotEmpty) ...[
+                _chip('${_defauts.where((d) => d["statut"] == "a_faire").length} à faire', kRed),
+                const SizedBox(width: 8),
+                _chip('${_defauts.where((d) => d["statut"] == "regle").length} réglés', const Color(0xFF10B981)),
+              ],
+            ]),
+            const SizedBox(height: 12),
+            if (_loadingDefauts)
+              const Center(child: CircularProgressIndicator(color: kAccent))
+            else if (_defauts.isEmpty)
+              Container(padding: const EdgeInsets.symmetric(vertical: 24), child: Center(child: Column(children: [Icon(LucideIcons.mapPin, size: 28, color: kTextSub.withOpacity(0.3)), const SizedBox(height: 8), const Text('Aucun pointage', style: TextStyle(color: kTextSub, fontSize: 13))])))
+            else
+              ..._defauts.map((d) {
+                final estFait = d['statut'] == 'regle';
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(color: estFait ? const Color(0xFFF0FDF4) : Colors.white, borderRadius: BorderRadius.circular(10), border: Border.all(color: estFait ? const Color(0xFF10B981).withOpacity(0.3) : const Color(0xFFE5E7EB))),
+                  child: Row(children: [
+                    Container(
+                      width: 32, height: 32,
+                      decoration: BoxDecoration(color: estFait ? const Color(0xFF10B981) : kRed, borderRadius: BorderRadius.circular(8)),
+                      child: Icon(estFait ? LucideIcons.checkCircle : LucideIcons.alertCircle, size: 16, color: Colors.white),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(d['titre'] ?? '', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: estFait ? kTextSub : kTextMain, decoration: estFait ? TextDecoration.lineThrough : null)),
+                      const SizedBox(height: 2),
+                      Row(children: [
+                        Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(4)), child: Text(d['document_nom'] ?? '', style: const TextStyle(fontSize: 9, color: kTextSub, fontWeight: FontWeight.w600))),
+                        const SizedBox(width: 6),
+                        Text(_formatDate(d['created_at'] ?? ''), style: const TextStyle(fontSize: 10, color: kTextSub)),
+                      ]),
+                    ])),
+                    PopupMenuButton<String>(
+                      onSelected: (v) { if (v == 'toggle') _toggleDefautStatut(d); if (v == 'delete') _supprimerDefaut(d); },
+                      itemBuilder: (_) => [
+                        PopupMenuItem(value: 'toggle', child: Row(children: [Icon(estFait ? LucideIcons.rotateCcw : LucideIcons.checkCircle, size: 13, color: const Color(0xFF10B981)), const SizedBox(width: 8), Text(estFait ? 'Marquer à faire' : 'Marquer réglé')])),
+                        const PopupMenuItem(value: 'delete', child: Row(children: [Icon(LucideIcons.trash2, size: 13, color: kRed), SizedBox(width: 8), Text('Supprimer', style: TextStyle(color: kRed))])),
+                      ],
+                      child: const Padding(padding: EdgeInsets.all(4), child: Icon(LucideIcons.moreVertical, size: 15, color: kTextSub)),
+                    ),
+                  ]),
+                );
+              }),
+          ]),
+        ),
       ]),
     );
   }
 
-  Widget _buildReservesList() {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('LISTE DES RÉSERVES (${_reserves.length})', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5)),
-      const SizedBox(height: 10),
-      if (_reserves.isEmpty) Container(padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0xFFE5E7EB))), child: const Center(child: Text('Aucune réserve — cliquez sur le plan', style: TextStyle(color: kTextSub, fontSize: 12))))
-      else ..._reserves.asMap().entries.map((e) {
-        final i = e.key; final r = e.value; final estFait = r['statut'] == 'regle';
-        return Container(margin: const EdgeInsets.only(bottom: 10), padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10), border: Border.all(color: estFait ? const Color(0xFF10B981).withOpacity(0.3) : const Color(0xFFE5E7EB))), child: Row(children: [
-          Container(width: 24, height: 24, decoration: BoxDecoration(color: estFait ? const Color(0xFF10B981) : kRed, shape: BoxShape.circle), child: Center(child: Text('${i + 1}', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800)))),
-          const SizedBox(width: 10),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(r['titre'], style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: estFait ? kTextSub : kTextMain, decoration: estFait ? TextDecoration.lineThrough : null)), const SizedBox(height: 2), Row(children: [Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: estFait ? const Color(0xFF10B981).withOpacity(0.1) : kRed.withOpacity(0.1), borderRadius: BorderRadius.circular(6)), child: Text(estFait ? 'Réglé' : 'À faire', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: estFait ? const Color(0xFF10B981) : kRed))), const SizedBox(width: 6), Text(r['date'], style: const TextStyle(fontSize: 10, color: kTextSub))])])),
-          GestureDetector(onTap: () => setState(() => _reserves[i]['statut'] = estFait ? 'a_faire' : 'regle'), child: Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5), decoration: BoxDecoration(color: const Color(0xFFF0FDF4), borderRadius: BorderRadius.circular(6), border: Border.all(color: const Color(0xFF10B981).withOpacity(0.4))), child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(estFait ? LucideIcons.rotateCcw : LucideIcons.checkCircle, size: 11, color: const Color(0xFF10B981)), const SizedBox(width: 4), Text(estFait ? 'Annuler' : 'Marquer réglé', style: const TextStyle(fontSize: 10, color: Color(0xFF10B981), fontWeight: FontWeight.w600))]))),
-        ]));
-      }),
-    ]);
+  Widget _buildZonePointage(Map<String, dynamic> doc) {
+    final nomRaw = (doc['nom'] as String? ?? '');
+    final nom    = nomRaw.contains('||META||') ? nomRaw.split('||META||')[0]
+                 : nomRaw.contains('')     ? nomRaw.split('')[0]
+                 : nomRaw;
+    final defautsDuDoc = _defauts.where((d) => d['document_id'] == doc['id']).toList();
+
+    return LayoutBuilder(builder: (ctx, cs) {
+      final W = cs.maxWidth;
+      final H = W * 0.6;
+      return Container(
+        width: W, height: H,
+        decoration: BoxDecoration(
+          color: const Color(0xFFF3F4F6),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: kAccent.withOpacity(0.3)),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: Stack(children: [
+            // Fond : image réelle si disponible, sinon plan générique
+            if ((doc['url'] as String? ?? '').startsWith('http'))
+              Positioned.fill(child: Image.network(
+                doc['url'] as String,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => CustomPaint(painter: _FloorPlanPainter(), size: Size(W, H)),
+              ))
+            else
+              CustomPaint(painter: _FloorPlanPainter(), size: Size(W, H)),
+            // Indicateur
+            Positioned(bottom: 8, left: 0, right: 0, child: Center(child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(color: Colors.black.withOpacity(0.55), borderRadius: BorderRadius.circular(20)),
+              child: Text('Tap sur le plan pour ajouter un pointage — $nom', style: const TextStyle(color: Colors.white, fontSize: 10)),
+            ))),
+            // Zone de clic
+            Positioned.fill(child: GestureDetector(onTapDown: (d) {
+              final rx = (d.localPosition.dx / W).clamp(0.0, 1.0);
+              final ry = (d.localPosition.dy / H).clamp(0.0, 1.0);
+              _showAddDefautDialog(rx, ry, doc['id'], nom);
+            })),
+            // Pins existants
+            ...defautsDuDoc.asMap().entries.map((e) {
+              final i = e.key; final def = e.value;
+              final x = ((def['x'] as num? ?? 0).toDouble() * W) - 14;
+              final y = ((def['y'] as num? ?? 0).toDouble() * H) - 14;
+              final estFait = def['statut'] == 'regle';
+              return Positioned(left: x, top: y, child: GestureDetector(
+                onTap: () => _snack(context, def['titre'] ?? '', estFait ? const Color(0xFF10B981) : kRed),
+                child: Container(
+                  width: 28, height: 28,
+                  decoration: BoxDecoration(
+                    color: estFait ? const Color(0xFF10B981) : kRed,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 2),
+                    boxShadow: [BoxShadow(color: (estFait ? const Color(0xFF10B981) : kRed).withOpacity(0.4), blurRadius: 6)],
+                  ),
+                  child: Center(child: Text('${i+1}', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800))),
+                ),
+              ));
+            }),
+          ]),
+        ),
+      );
+    });
   }
 
+  Widget _chip(String label, Color color) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
+    child: Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: color)),
+  );
+
+  // ── GALERIE ───────────────────────────────────────────────────────────────
   Widget _buildGalerie(double pad) {
-    return SingleChildScrollView(padding: EdgeInsets.fromLTRB(pad, 16, pad, pad + 20), child: Container(padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: const Color(0xFFE5E7EB))), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [const Text('Galerie du chantier', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: kTextMain)), const Spacer(), ElevatedButton.icon(onPressed: _pickPhoto, icon: const Icon(LucideIcons.camera, size: 13, color: Colors.white), label: const Text('Photos', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12)), style: ElevatedButton.styleFrom(backgroundColor: kAccent, elevation: 0, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))))]),
-      const SizedBox(height: 16),
-      if (_photos.isEmpty) Container(padding: const EdgeInsets.symmetric(vertical: 50), child: Column(children: [Container(width: 60, height: 60, decoration: BoxDecoration(color: kAccent.withOpacity(0.08), borderRadius: BorderRadius.circular(14)), child: Icon(LucideIcons.image, size: 26, color: kAccent.withOpacity(0.5))), const SizedBox(height: 14), const Text('Aucune photo', style: TextStyle(color: kTextMain, fontSize: 13, fontWeight: FontWeight.w600)), const SizedBox(height: 4), const Text('Cliquez sur "Photos" pour ajouter des images du chantier', style: TextStyle(color: kTextSub, fontSize: 12))]))
-      else LayoutBuilder(builder: (ctx, cs) {
-        final cols = cs.maxWidth > 600 ? 3 : 2; final rows = <Widget>[];
-        for (int i = 0; i < _photos.length; i += cols) { final rowItems = _photos.skip(i).take(cols).toList(); rows.add(Row(children: [for (int j = 0; j < rowItems.length; j++) ...[if (j > 0) const SizedBox(width: 10), Expanded(child: _PhotoCard(photo: rowItems[j], onDelete: () => setState(() => _photos.removeAt(i + j))))], if (rowItems.length < cols) ...[const SizedBox(width: 10), const Expanded(child: SizedBox())]])); if (i + cols < _photos.length) rows.add(const SizedBox(height: 10)); }
-        return Column(children: rows);
-      }),
-    ])));
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(pad, 16, pad, pad + 20),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: const Color(0xFFE5E7EB))),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Text('Galerie du chantier', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: kTextMain)),
+            const Spacer(),
+            if (_photos.isNotEmpty) Text('${_photos.length} photo(s)', style: const TextStyle(color: kTextSub, fontSize: 12)),
+          ]),
+          const SizedBox(height: 4),
+          const Text('Photos classées de la plus récente à la plus ancienne', style: TextStyle(color: kTextSub, fontSize: 11)),
+          const SizedBox(height: 16),
+          if (_loadingPhotos)
+            const Center(child: Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator(color: kAccent)))
+          else if (_photos.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 50),
+              child: Column(children: [
+                Container(width: 64, height: 64, decoration: BoxDecoration(color: kAccent.withOpacity(0.08), borderRadius: BorderRadius.circular(16)), child: Icon(LucideIcons.image, size: 28, color: kAccent.withOpacity(0.5))),
+                const SizedBox(height: 14),
+                const Text('Aucune photo', style: TextStyle(color: kTextMain, fontSize: 13, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 4),
+                const Text('Cliquez sur "Ajouter" pour uploader des photos', style: TextStyle(color: kTextSub, fontSize: 12)),
+              ]),
+            )
+          else
+            LayoutBuilder(builder: (ctx, cs) {
+              final cols = cs.maxWidth > 600 ? 3 : 2;
+              final rows = <Widget>[];
+              for (int i = 0; i < _photos.length; i += cols) {
+                final rowItems = _photos.skip(i).take(cols).toList();
+                rows.add(Row(children: [
+                  for (int j = 0; j < rowItems.length; j++) ...[
+                    if (j > 0) const SizedBox(width: 10),
+                    Expanded(child: _PhotoCard(photo: rowItems[j], onDelete: () => _supprimerPhoto(rowItems[j]))),
+                  ],
+                  if (rowItems.length < cols) ...[const SizedBox(width: 10), const Expanded(child: SizedBox())],
+                ]));
+                if (i + cols < _photos.length) rows.add(const SizedBox(height: 10));
+              }
+              return Column(children: rows);
+            }),
+        ]),
+      ),
+    );
   }
 
+  // ── CRC & ACTUALITÉS ─────────────────────────────────────────────────────
   Widget _buildCRC(double pad) {
-    return SingleChildScrollView(padding: EdgeInsets.fromLTRB(pad, 16, pad, pad + 20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Container(padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: const Color(0xFFE5E7EB))), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [const Text('Comptes-Rendus de Chantier (CRC)', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: kTextMain)), const Spacer(), OutlinedButton.icon(onPressed: _showAddCrcDialog, icon: const Icon(LucideIcons.filePlus, size: 13), label: const Text('Nouveau CRC', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)), style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFFD1D5DB)), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))))]),
-        const SizedBox(height: 16),
-        if (_crcs.isEmpty) const Padding(padding: EdgeInsets.symmetric(vertical: 24), child: Center(child: Text('Aucun compte-rendu', style: TextStyle(color: kTextSub, fontSize: 13))))
-        else ..._crcs.map((crc) => Container(margin: const EdgeInsets.only(bottom: 10), padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14), decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB))), child: Row(children: [Container(width: 36, height: 36, decoration: BoxDecoration(color: const Color(0xFFEFF6FF), borderRadius: BorderRadius.circular(8)), child: const Icon(LucideIcons.fileText, size: 16, color: Color(0xFF3B82F6))), const SizedBox(width: 14), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(crc['titre'], style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: kTextMain)), const SizedBox(height: 3), Text('${crc['date']}  •  Par ${crc['auteur']}', style: const TextStyle(fontSize: 11, color: kTextSub))])), const SizedBox(width: 10), Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: _crcColor(crc['statut']), borderRadius: BorderRadius.circular(20)), child: Text(_crcLabel(crc['statut']), style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)))]))),
-      ])),
-      const SizedBox(height: 20),
-      Container(padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: const Color(0xFFE5E7EB))), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [const Text("Fil d'actualité du chantier", style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: kTextMain)), const Spacer(), GestureDetector(onTap: () => _showAddActualiteDialog(), child: Container(padding: const EdgeInsets.all(6), decoration: BoxDecoration(color: kAccent.withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: const Icon(LucideIcons.plus, size: 16, color: kAccent)))]),
-        const SizedBox(height: 16),
-        if (_actualites.isEmpty) const Center(child: Padding(padding: EdgeInsets.symmetric(vertical: 20), child: Text('Aucune actualité', style: TextStyle(color: kTextSub, fontSize: 13))))
-        else ..._actualites.asMap().entries.map((e) {
-          final i = e.key; final a = e.value; final isLast = i == _actualites.length - 1;
-          return IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Column(children: [Container(width: 12, height: 12, decoration: const BoxDecoration(color: Color(0xFF10B981), shape: BoxShape.circle)), if (!isLast) Expanded(child: Container(width: 2, color: const Color(0xFFE5E7EB)))]),
-            const SizedBox(width: 14),
-            Expanded(child: Padding(padding: EdgeInsets.only(bottom: isLast ? 0 : 16), child: Container(padding: const EdgeInsets.all(14), decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0xFFE5E7EB))), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Row(children: [Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: kAccent.withOpacity(0.1), borderRadius: BorderRadius.circular(6)), child: Text(a['type'], style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: kAccent))), const Spacer(), Text(a['date'], style: const TextStyle(fontSize: 11, color: kTextSub))]), const SizedBox(height: 8), Text(a['contenu'], style: const TextStyle(fontSize: 13, color: kTextMain, height: 1.4)), const SizedBox(height: 6), Text('Par ${a['auteur']}', style: const TextStyle(fontSize: 11, color: kAccent, fontWeight: FontWeight.w600))]))),
-        )]));
-        }),
-      ])),
-    ]));
-  }
+    final typeColors = {
+      'Progrès':  const Color(0xFF10B981),
+      'Problème': kRed,
+      'Décision': const Color(0xFF8B5CF6),
+      'Livraison':const Color(0xFF3B82F6),
+      'Sécurité': const Color(0xFFF59E0B),
+      'Note':     const Color(0xFF6B7280),
+    };
 
-  void _showAddActualiteDialog() {
-    final ctrl = TextEditingController();
-    showDialog(context: context, builder: (_) => Dialog(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 400), child: Column(mainAxisSize: MainAxisSize.min, children: [
-      _DialogHeader(icon: LucideIcons.rss, title: 'Nouvelle actualité', subtitle: 'Ajoutez une note au fil de chantier'),
-      Padding(padding: const EdgeInsets.all(20), child: _DField(icon: LucideIcons.messageSquare, label: 'CONTENU *', hint: 'Ex: Les fondations sont terminées...', controller: ctrl, maxLines: 3)),
-      _DialogActions(onCancel: () => Navigator.pop(context), onConfirm: () {
-        final t = ctrl.text.trim(); if (t.isEmpty) { _snack(context, 'Contenu obligatoire', kRed); return; }
-        final now = DateTime.now();
-        setState(() { _actualites.insert(0, {'type': 'Progrès', 'date': '${now.day} ${_monthFr(now.month)}.', 'contenu': t, 'auteur': widget.project.chef}); });
-        Navigator.pop(context); _snack(context, 'Actualité ajoutée', kAccent);
-      }, label: 'Publier'),
-    ]))));
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(pad, 16, pad, pad + 20),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+
+        // ── DIFFÉRENCE CRC vs ACTUALITÉ ──────────────────────────────────
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB))),
+          child: Row(children: [
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [Container(width: 8, height: 8, decoration: const BoxDecoration(color: Color(0xFF3B82F6), shape: BoxShape.circle)), const SizedBox(width: 6), const Text('Rapport CRC', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF3B82F6)))]),
+              const SizedBox(height: 4),
+              const Text('Document officiel avec statut du chantier. Partagé avec le client.', style: TextStyle(fontSize: 11, color: kTextSub)),
+            ])),
+            Container(width: 1, height: 40, color: const Color(0xFFE5E7EB), margin: const EdgeInsets.symmetric(horizontal: 16)),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [Container(width: 8, height: 8, decoration: const BoxDecoration(color: Color(0xFF10B981), shape: BoxShape.circle)), const SizedBox(width: 6), const Text("Fil d'actualité", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF10B981)))]),
+              const SizedBox(height: 4),
+              const Text("Note rapide informelle. Observation terrain, info d'avancement.", style: TextStyle(fontSize: 11, color: kTextSub)),
+            ])),
+          ]),
+        ),
+
+        const SizedBox(height: 16),
+
+        // ── RAPPORTS CRC ─────────────────────────────────────────────────
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), border: Border.all(color: const Color(0xFFE5E7EB))),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Container(width: 8, height: 8, decoration: const BoxDecoration(color: Color(0xFF3B82F6), shape: BoxShape.circle)),
+              const SizedBox(width: 8),
+              const Text('Comptes-Rendus de Chantier (CRC)', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: kTextMain)),
+              const Spacer(),
+              Text('${_crcs.length} rapport(s)', style: const TextStyle(color: kTextSub, fontSize: 12)),
+            ]),
+            const SizedBox(height: 14),
+            if (_loadingCRC)
+              const Center(child: CircularProgressIndicator(color: kAccent))
+            else if (_crcs.isEmpty)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 24),
+                decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(10)),
+                child: Column(children: [Icon(LucideIcons.clipboardList, size: 28, color: kTextSub.withOpacity(0.3)), const SizedBox(height: 8), const Text('Aucun rapport CRC', style: TextStyle(color: kTextSub, fontSize: 13))]),
+              )
+            else
+              ..._crcs.map((crc) {
+                final statColor = _crcColor(crc['statut'] ?? 'conforme');
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB))),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Row(children: [
+                      Container(width: 36, height: 36, decoration: BoxDecoration(color: const Color(0xFF3B82F6).withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: const Icon(LucideIcons.fileText, size: 16, color: Color(0xFF3B82F6))),
+                      const SizedBox(width: 12),
+                      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text(crc['titre'] ?? '', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: kTextMain)),
+                        Text('${_formatDate(crc['created_at'] ?? '')}  •  Par ${crc['auteur'] ?? ''}', style: const TextStyle(fontSize: 11, color: kTextSub)),
+                      ])),
+                      Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: statColor, borderRadius: BorderRadius.circular(20)), child: Text(_crcLabel(crc['statut'] ?? 'conforme'), style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700))),
+                    ]),
+                    if ((crc['contenu'] as String? ?? '').isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      const Divider(height: 1, color: Color(0xFFE5E7EB)),
+                      const SizedBox(height: 10),
+                      Text(crc['contenu'] ?? '', style: const TextStyle(fontSize: 12, color: kTextSub, height: 1.5)),
+                    ],
+                  ]),
+                );
+              }),
+          ]),
+        ),
+
+        const SizedBox(height: 16),
+
+        // ── FIL D'ACTUALITÉ ──────────────────────────────────────────────
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), border: Border.all(color: const Color(0xFFE5E7EB))),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Container(width: 8, height: 8, decoration: const BoxDecoration(color: Color(0xFF10B981), shape: BoxShape.circle)),
+              const SizedBox(width: 8),
+              const Text("Fil d'actualité du chantier", style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: kTextMain)),
+              const Spacer(),
+              Text('${_actualites.length} note(s)', style: const TextStyle(color: kTextSub, fontSize: 12)),
+            ]),
+            const SizedBox(height: 14),
+            if (_loadingCRC)
+              const Center(child: CircularProgressIndicator(color: kAccent))
+            else if (_actualites.isEmpty)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 24),
+                decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(10)),
+                child: Column(children: [Icon(LucideIcons.rss, size: 28, color: kTextSub.withOpacity(0.3)), const SizedBox(height: 8), const Text('Aucune actualité publiée', style: TextStyle(color: kTextSub, fontSize: 13))]),
+              )
+            else
+              ...(_actualites.asMap().entries.map((e) {
+                final i = e.key; final a = e.value;
+                final isLast = i == _actualites.length - 1;
+                final color = typeColors[a['type'] ?? 'Note'] ?? const Color(0xFF6B7280);
+                return IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Column(children: [
+                    Container(width: 12, height: 12, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+                    if (!isLast) Expanded(child: Container(width: 2, color: const Color(0xFFE5E7EB))),
+                  ]),
+                  const SizedBox(width: 14),
+                  Expanded(child: Padding(
+                    padding: EdgeInsets.only(bottom: isLast ? 0 : 12),
+                    child: Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0xFFE5E7EB))),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Row(children: [
+                          Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(6), border: Border.all(color: color.withOpacity(0.3))), child: Text(a['type'] ?? 'Note', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: color))),
+                          const Spacer(),
+                          Text(_formatDate(a['created_at'] ?? ''), style: const TextStyle(fontSize: 11, color: kTextSub)),
+                        ]),
+                        const SizedBox(height: 8),
+                        Text(a['contenu'] ?? '', style: const TextStyle(fontSize: 13, color: kTextMain, height: 1.4)),
+                        const SizedBox(height: 6),
+                        Text('Par ${a['auteur'] ?? ''}', style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w600)),
+                      ]),
+                    ),
+                  )),
+                ]));
+              })),
+          ]),
+        ),
+      ]),
+    );
   }
+}
+
+// ── Painters & Cards ─────────────────────────────────────────────────────────
+class _PlanPlaceholder extends StatelessWidget {
+  final bool isActive;
+  const _PlanPlaceholder({this.isActive = false});
+  @override
+  Widget build(BuildContext context) => Container(
+    color: isActive ? kAccent.withOpacity(0.08) : const Color(0xFFF3F4F6),
+    child: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+      Icon(LucideIcons.penTool, size: 24, color: isActive ? kAccent.withOpacity(0.5) : kTextSub.withOpacity(0.3)),
+      const SizedBox(height: 6),
+      Text('Plan', style: TextStyle(fontSize: 10, color: isActive ? kAccent.withOpacity(0.6) : kTextSub.withOpacity(0.4), fontWeight: FontWeight.w600)),
+    ])),
+  );
 }
 
 class _FloorPlanPainter extends CustomPainter {
@@ -2493,35 +3305,63 @@ class _FloorPlanPainter extends CustomPainter {
     final fill  = Paint()..color = const Color(0xFFE5E7EB)..style = PaintingStyle.fill;
     final w = size.width; final h = size.height;
     canvas.drawRect(Rect.fromLTWH(0, 0, w, h), Paint()..color = const Color(0xFFF9FAFB));
-    final outer = RRect.fromRectAndRadius(Rect.fromLTRB(w * 0.08, h * 0.08, w * 0.92, h * 0.92), const Radius.circular(4));
+    final outer = RRect.fromRectAndRadius(Rect.fromLTRB(w*0.05, h*0.05, w*0.95, h*0.95), const Radius.circular(4));
     canvas.drawRRect(outer, fill); canvas.drawRRect(outer, paint);
-    canvas.drawRect(Rect.fromLTRB(w * 0.10, h * 0.10, w * 0.55, h * 0.90), paint);
-    canvas.drawRect(Rect.fromLTRB(w * 0.55, h * 0.10, w * 0.90, h * 0.55), paint);
-    canvas.drawRect(Rect.fromLTRB(w * 0.55, h * 0.55, w * 0.90, h * 0.90), paint);
-    final doorPaint = Paint()..color = const Color(0xFF6B7280)..strokeWidth = 1.5..style = PaintingStyle.stroke;
-    canvas.drawArc(Rect.fromCircle(center: Offset(w * 0.55, h * 0.38), radius: h * 0.12), -1.57, 1.57, false, doorPaint);
-    canvas.drawLine(Offset(w * 0.55, h * 0.38), Offset(w * 0.55, h * 0.38 - h * 0.12), doorPaint);
-    final winPaint = Paint()..color = const Color(0xFF93C5FD)..strokeWidth = 3..style = PaintingStyle.stroke;
-    canvas.drawLine(Offset(w * 0.65, h * 0.10), Offset(w * 0.80, h * 0.10), winPaint);
-    final sanPaint = Paint()..color = const Color(0xFF9CA3AF)..strokeWidth = 1..style = PaintingStyle.stroke;
-    canvas.drawOval(Rect.fromCenter(center: Offset(w * 0.73, h * 0.78), width: w * 0.10, height: h * 0.15), sanPaint);
+    canvas.drawRect(Rect.fromLTRB(w*0.07, h*0.07, w*0.52, h*0.93), paint);
+    canvas.drawRect(Rect.fromLTRB(w*0.52, h*0.07, w*0.93, h*0.52), paint);
+    canvas.drawRect(Rect.fromLTRB(w*0.52, h*0.52, w*0.93, h*0.93), paint);
+    final dp = Paint()..color = const Color(0xFF6B7280)..strokeWidth = 1.5..style = PaintingStyle.stroke;
+    canvas.drawArc(Rect.fromCircle(center: Offset(w*0.52, h*0.36), radius: h*0.11), -1.57, 1.57, false, dp);
+    canvas.drawLine(Offset(w*0.52, h*0.36), Offset(w*0.52, h*0.36-h*0.11), dp);
+    final wp = Paint()..color = const Color(0xFF93C5FD)..strokeWidth = 3..style = PaintingStyle.stroke;
+    canvas.drawLine(Offset(w*0.63, h*0.07), Offset(w*0.78, h*0.07), wp);
+    final sp = Paint()..color = const Color(0xFF9CA3AF)..strokeWidth = 1..style = PaintingStyle.stroke;
+    canvas.drawOval(Rect.fromCenter(center: Offset(w*0.72, h*0.76), width: w*0.10, height: h*0.14), sp);
   }
   @override bool shouldRepaint(_) => false;
 }
 
 class _PhotoCard extends StatelessWidget {
-  final Map<String, dynamic> photo; final VoidCallback onDelete;
+  final Map<String, dynamic> photo;
+  final VoidCallback onDelete;
   const _PhotoCard({required this.photo, required this.onDelete});
   @override
-  Widget build(BuildContext context) => Container(decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB)), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 6, offset: const Offset(0, 2))]), clipBehavior: Clip.hardEdge, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-    AspectRatio(aspectRatio: 4 / 3, child: photo['bytes'] != null ? Image.memory(photo['bytes'], fit: BoxFit.cover) : Container(color: const Color(0xFFF3F4F6), child: const Icon(LucideIcons.image, size: 32, color: kTextSub))),
-    Padding(padding: const EdgeInsets.all(10), child: Row(children: [Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(photo['name'] ?? '', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: kTextMain), overflow: TextOverflow.ellipsis), const SizedBox(height: 2), Text(photo['date'] ?? '', style: const TextStyle(fontSize: 10, color: kTextSub))])), GestureDetector(onTap: onDelete, child: Container(padding: const EdgeInsets.all(5), decoration: BoxDecoration(color: const Color(0xFFFEF2F2), borderRadius: BorderRadius.circular(6)), child: const Icon(LucideIcons.trash2, size: 12, color: kRed)))])),
-  ]));
+  Widget build(BuildContext context) {
+    final url  = photo['url']  as String? ?? '';
+    final nom  = photo['nom']  as String? ?? '';
+    final date = photo['uploaded_at'] as String? ?? '';
+    return Container(
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB)), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 6, offset: const Offset(0, 2))]),
+      clipBehavior: Clip.hardEdge,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        AspectRatio(
+          aspectRatio: 4/3,
+          child: url.isNotEmpty && !url.startsWith('fichier:')
+              ? Image.network(url, fit: BoxFit.cover, errorBuilder: (_, __, ___) => Container(color: const Color(0xFFF3F4F6), child: const Icon(LucideIcons.image, size: 32, color: kTextSub)))
+              : Container(color: const Color(0xFFF3F4F6), child: const Icon(LucideIcons.image, size: 32, color: kTextSub)),
+        ),
+        Padding(padding: const EdgeInsets.all(10), child: Row(children: [
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(nom, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: kTextMain), overflow: TextOverflow.ellipsis),
+            const SizedBox(height: 2),
+            Text(_formatDate(date), style: const TextStyle(fontSize: 10, color: kTextSub)),
+          ])),
+          GestureDetector(onTap: onDelete, child: Container(padding: const EdgeInsets.all(5), decoration: BoxDecoration(color: const Color(0xFFFEF2F2), borderRadius: BorderRadius.circular(6)), child: const Icon(LucideIcons.trash2, size: 12, color: kRed))),
+        ])),
+      ]),
+    );
+  }
+
+  static String _formatDate(String iso) {
+    try {
+      final d = DateTime.parse(iso).toLocal();
+      const m = ['jan','fév','mars','avr','mai','juin','juil','août','sept','oct','nov','déc'];
+      return '${d.day} ${m[d.month-1]} ${d.year}';
+    } catch (_) { return iso.length > 10 ? iso.substring(0, 10) : iso; }
+  }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  ONGLET MODÈLE 3D
-// ══════════════════════════════════════════════════════════════════════════════
+
 class _Modele3DTab extends StatefulWidget {
   final Project project;
   const _Modele3DTab({required this.project});
@@ -2557,7 +3397,8 @@ class _Modele3DTabState extends State<_Modele3DTab> {
         ]))
       else if (!_showForm)
         Container(width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 60, horizontal: 24), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: const Color(0xFFE5E7EB))), child: Column(children: [Container(width: 64, height: 64, decoration: BoxDecoration(color: kAccent.withOpacity(0.08), borderRadius: BorderRadius.circular(16)), child: Icon(LucideIcons.box, size: 28, color: kAccent.withOpacity(0.6))), const SizedBox(height: 16), const Text('Aucun modèle 3D pour ce projet', style: TextStyle(color: kTextMain, fontSize: 14, fontWeight: FontWeight.w600)), const SizedBox(height: 6), const Text('Ajoutez un lien vers votre maquette BIM ou modèle Sketchfab', style: TextStyle(color: kTextSub, fontSize: 12), textAlign: TextAlign.center), const SizedBox(height: 20), OutlinedButton.icon(onPressed: () => setState(() => _showForm = true), icon: const Icon(LucideIcons.link, size: 14, color: kAccent), label: const Text('Ajouter un lien 3D', style: TextStyle(color: kAccent, fontWeight: FontWeight.w600, fontSize: 13)), style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10), side: const BorderSide(color: kAccent), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))))]),
-        ),const SizedBox(height: 20),
+         ),
+          const SizedBox(height: 20),
       Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB))), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('Formats & Plateformes supportés', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: kTextMain)), const SizedBox(height: 12), Wrap(spacing: 8, runSpacing: 8, children: [for (final p in ['Sketchfab', 'Autodesk BIM 360', 'Speckle', 'Trimble Connect', 'Archicad BIMx', 'Autre lien iframe']) Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: const Color(0xFFE5E7EB))), child: Text(p, style: const TextStyle(fontSize: 12, color: kTextSub)))])])),
     ]));
   }
