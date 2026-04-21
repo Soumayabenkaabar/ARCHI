@@ -3,6 +3,7 @@ import 'package:archi_manager/models/notification.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../constants/colors.dart';
 import '../models/project.dart';
@@ -1128,7 +1129,7 @@ class _FinancesTabState extends State<_FinancesTab> {
           child: Row(children: const [
             SizedBox(width: 100, child: Text('TYPE',       style: _hStyle)),
             SizedBox(width: 8),
-            Expanded(flex: 3, child: Text('N° / DÉSIGNATION', style: _hStyle)),
+            Expanded(flex: 3, child: Text('N° / TÂCHE',        style: _hStyle)),
             Expanded(flex: 2, child: Text('ÉMETTEUR',     style: _hStyle)),
             Expanded(flex: 2, child: Text('ÉCHÉANCE',     style: _hStyle)),
             Expanded(flex: 2, child: Text('MONTANT',      style: _hStyle, textAlign: TextAlign.right)),
@@ -1215,10 +1216,19 @@ class _LigneFacture extends StatelessWidget {
         )),
         const SizedBox(width: 8),
 
-        // N° / désignation
+        // N° / désignation + phase + tâche
         Expanded(flex: 3, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(f.numero.isNotEmpty ? f.numero : '—', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kTextMain), overflow: TextOverflow.ellipsis),
-          if (f.tacheAssociee.isNotEmpty) Text(f.tacheAssociee, style: const TextStyle(fontSize: 10, color: kTextSub), overflow: TextOverflow.ellipsis),
+          if (f.tacheAssociee.isNotEmpty || f.phaseId != null) ...[
+            const SizedBox(height: 3),
+            Row(children: [
+              if (f.tacheAssociee.isNotEmpty) ...[
+                const Icon(LucideIcons.checkSquare, size: 10, color: kAccent),
+                const SizedBox(width: 3),
+                Flexible(child: Text(f.tacheAssociee, style: const TextStyle(fontSize: 10, color: kAccent, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis)),
+              ],
+            ]),
+          ],
         ])),
 
         // Émetteur
@@ -1246,15 +1256,9 @@ class _LigneFacture extends StatelessWidget {
               onTap: hasPj
                   ? () async {
                       final raw = f.urlPdf!;
-                      // Fichier local : on ne peut pas l'ouvrir depuis web/desktop directement
                       if (raw.startsWith('fichier:')) {
-                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                          content: Text('Fichier local : ${raw.replaceFirst('fichier:', '')}'),
-                          behavior: SnackBarBehavior.floating,
-                          margin: const EdgeInsets.all(12),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                          duration: const Duration(seconds: 3),
-                        ));
+                        // Fichier non uploadé — informer l'utilisateur
+                        _snack(context, 'Fichier local non accessible. Modifiez la facture pour ré-uploader.', const Color(0xFFF59E0B));
                       } else {
                         final uri = Uri.tryParse(raw);
                         if (uri != null) try { await launchUrl(uri, mode: LaunchMode.externalApplication); } catch (_) {}
@@ -1444,7 +1448,12 @@ class _FactureDialogState extends State<_FactureDialog> {
   String?    _pieceJointeUrl;
   List<int>? _pieceJointeBytes;
 
-
+  // Phase & tâche (pour factures supplémentaires)
+  List<Phase>  _phases        = [];
+  List<Tache>  _taches        = [];
+  String?      _selectedPhaseId;
+  String?      _selectedTacheId;
+  bool         _loadingPhases = false;
 
   Color get _accent => widget.isInitiale ? const Color(0xFF8B5CF6) : kAccent;
 
@@ -1453,16 +1462,49 @@ class _FactureDialogState extends State<_FactureDialog> {
     super.initState();
     final f = widget.existing;
     if (f != null) {
-      _numCtrl.text      = f.numero;
-      _montantCtrl.text  = f.montant > 0 ? f.montant.toStringAsFixed(2) : '';
-      _echeanceCtrl.text = f.dateEcheance ?? '';
-      _fournCtrl.text    = f.fournisseur;
-      _statut            = f.statut;
-      _pieceJointeUrl    = f.urlPdf;
+      _numCtrl.text       = f.numero;
+      _montantCtrl.text   = f.montant > 0 ? f.montant.toStringAsFixed(2) : '';
+      _echeanceCtrl.text  = f.dateEcheance ?? '';
+      _fournCtrl.text     = f.fournisseur;
+      _statut             = f.statut;
+      _pieceJointeUrl     = f.urlPdf;
+      _selectedPhaseId    = f.phaseId;
       if (f.urlPdf?.startsWith('fichier:') == true) {
         _pieceJointeNom = f.urlPdf!.replaceFirst('fichier:', '');
       }
     }
+    if (!widget.isInitiale) _loadPhasesEtTaches();
+  }
+
+  Future<void> _loadPhasesEtTaches() async {
+    setState(() => _loadingPhases = true);
+    try {
+      final results = await Future.wait([
+        PhaseService.getPhases(widget.project.id),
+        TacheService.getTaches(widget.project.id),
+      ]);
+      final phases = results[0] as List<Phase>;
+      final taches = results[1] as List<Tache>;
+      // Restaurer la tâche sélectionnée si édition
+      String? selectedTacheId;
+      if (widget.existing != null && widget.existing!.tacheAssociee.isNotEmpty) {
+        final match = taches.where((t) => t.titre == widget.existing!.tacheAssociee).firstOrNull;
+        selectedTacheId = match?.id;
+      }
+      setState(() {
+        _phases           = phases;
+        _taches           = taches;
+        _selectedTacheId  = selectedTacheId;
+        _loadingPhases    = false;
+      });
+    } catch (_) {
+      setState(() => _loadingPhases = false);
+    }
+  }
+
+  List<Tache> get _tachesDeLaPhase {
+    if (_selectedPhaseId == null) return _taches;
+    return _taches.where((t) => t.phaseId == _selectedPhaseId).toList();
   }
 
   @override
@@ -1482,14 +1524,40 @@ class _FactureDialogState extends State<_FactureDialog> {
         allowedExtensions: ['pdf', 'png', 'jpg', 'jpeg'],
         withData: true,
       );
-      if (result != null && result.files.isNotEmpty) {
-        final file = result.files.first;
-        setState(() {
-          _pieceJointeNom   = file.name;
-          _pieceJointeUrl   = 'fichier:${file.name}';
-          _pieceJointeBytes = file.bytes;
-        });
+      if (result == null || result.files.isEmpty) return;
+      final file = result.files.first;
+      if (file.bytes == null) return;
 
+      // Afficher un indicateur d'upload
+      setState(() {
+        _pieceJointeNom   = file.name;
+        _pieceJointeUrl   = null;
+        _pieceJointeBytes = file.bytes;
+      });
+
+      _snack(context, 'Upload en cours...', kAccent);
+
+      // Upload vers Supabase Storage (bucket "factures")
+      try {
+        final ext       = file.name.split('.').last.toLowerCase();
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        final path      = 'factures/${widget.project.id}/${timestamp}_${file.name}';
+        final mime      = ext == 'pdf' ? 'application/pdf' : 'image/$ext';
+
+        await Supabase.instance.client.storage
+            .from('factures')
+            .uploadBinary(path, file.bytes!, fileOptions: FileOptions(contentType: mime, upsert: true));
+
+        final publicUrl = Supabase.instance.client.storage
+            .from('factures')
+            .getPublicUrl(path);
+
+        setState(() => _pieceJointeUrl = publicUrl);
+        _snack(context, 'Fichier uploadé ✓', const Color(0xFF10B981));
+      } catch (e) {
+        // Upload échoué → on garde le fichier en local avec son nom
+        setState(() => _pieceJointeUrl = 'fichier:${file.name}');
+        _snack(context, 'Upload impossible — fichier enregistré localement', const Color(0xFFF59E0B));
       }
     } catch (_) {
       _snack(context, 'Impossible d\'ouvrir le fichier', kRed);
@@ -1529,17 +1597,22 @@ class _FactureDialogState extends State<_FactureDialog> {
     final m = double.tryParse(_montantCtrl.text.replaceAll(' ', '').replaceAll(',', '.'));
     if (m == null || m <= 0) { _snack(context, 'Montant invalide', kRed); return; }
 
+    // Récupérer le titre de la tâche sélectionnée
+    final tache = _selectedTacheId != null
+        ? _taches.where((t) => t.id == _selectedTacheId).firstOrNull
+        : null;
+
     final facture = Facture(
       id:            widget.existing?.id ?? '',
       projetId:      widget.project.id,
-      phaseId:       null,
+      phaseId:       _selectedPhaseId,
       numero:        num,
       montant:       m,
       statut:        _statut,
       dateEcheance:  _echeanceCtrl.text.trim().isEmpty ? null : _echeanceCtrl.text.trim(),
       urlPdf:        _pieceJointeUrl,
       fournisseur:   _fournCtrl.text.trim(),
-      tacheAssociee: '',
+      tacheAssociee: tache?.titre ?? '',
       chefProjet:    widget.project.chef,
       createdAt:     widget.existing?.createdAt ?? DateTime.now().toIso8601String(),
       factureType:   widget.isInitiale ? 'initiale' : 'extra',
@@ -1706,6 +1779,80 @@ class _FactureDialogState extends State<_FactureDialog> {
               )),
             ]),
             const SizedBox(height: 14),
+
+            // ── Phase & Tâche (factures supplémentaires uniquement) ──────
+            if (!widget.isInitiale) ...[
+              const SizedBox(height: 12),
+              if (_loadingPhases)
+                const Center(child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: kAccent)),
+                ))
+              else if (_phases.isNotEmpty) ...[
+                // Sélecteur de phase
+                const Text('PHASE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5)),
+                const SizedBox(height: 6),
+                Container(
+                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE5E7EB))),
+                  child: DropdownButtonHideUnderline(child: DropdownButton<String?>(
+                    value: _selectedPhaseId,
+                    isExpanded: true,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    hint: const Text('Aucune phase', style: TextStyle(color: kTextSub, fontSize: 13)),
+                    style: const TextStyle(color: kTextMain, fontSize: 13),
+                    borderRadius: BorderRadius.circular(8),
+                    items: [
+                      const DropdownMenuItem<String?>(value: null, child: Text('— Aucune phase —', style: TextStyle(color: kTextSub, fontSize: 13))),
+                      ..._phases.map((ph) => DropdownMenuItem<String?>(
+                        value: ph.id,
+                        child: Row(children: [
+                          const Icon(LucideIcons.layers, size: 13, color: Color(0xFF8B5CF6)),
+                          const SizedBox(width: 8),
+                          Text(ph.nom, style: const TextStyle(fontSize: 13)),
+                        ]),
+                      )),
+                    ],
+                    onChanged: (v) => setState(() {
+                      _selectedPhaseId  = v;
+                      _selectedTacheId  = null; // reset tâche quand phase change
+                    }),
+                  )),
+                ),
+                const SizedBox(height: 10),
+                // Sélecteur de tâche (filtrée par phase)
+                const Text('TÂCHE ASSOCIÉE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5)),
+                const SizedBox(height: 6),
+                Container(
+                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE5E7EB))),
+                  child: DropdownButtonHideUnderline(child: DropdownButton<String?>(
+                    value: _selectedTacheId,
+                    isExpanded: true,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    hint: Text(
+                      _tachesDeLaPhase.isEmpty ? 'Aucune tâche dans cette phase' : 'Sélectionner une tâche',
+                      style: const TextStyle(color: kTextSub, fontSize: 13),
+                    ),
+                    style: const TextStyle(color: kTextMain, fontSize: 13),
+                    borderRadius: BorderRadius.circular(8),
+                    items: [
+                      const DropdownMenuItem<String?>(value: null, child: Text('— Aucune tâche —', style: TextStyle(color: kTextSub, fontSize: 13))),
+                      ..._tachesDeLaPhase.map((t) => DropdownMenuItem<String?>(
+                        value: t.id,
+                        child: Row(children: [
+                          Container(
+                            width: 8, height: 8,
+                            decoration: BoxDecoration(color: _tacheColor(t.statut), shape: BoxShape.circle),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(t.titre, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13))),
+                        ]),
+                      )),
+                    ],
+                    onChanged: _tachesDeLaPhase.isEmpty ? null : (v) => setState(() => _selectedTacheId = v),
+                  )),
+                ),
+              ],
+            ],
 
             // ── Statut ───────────────────────────────────────────────────
             const Text('STATUT', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5)),
@@ -2410,7 +2557,7 @@ class _Modele3DTabState extends State<_Modele3DTab> {
         ]))
       else if (!_showForm)
         Container(width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 60, horizontal: 24), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: const Color(0xFFE5E7EB))), child: Column(children: [Container(width: 64, height: 64, decoration: BoxDecoration(color: kAccent.withOpacity(0.08), borderRadius: BorderRadius.circular(16)), child: Icon(LucideIcons.box, size: 28, color: kAccent.withOpacity(0.6))), const SizedBox(height: 16), const Text('Aucun modèle 3D pour ce projet', style: TextStyle(color: kTextMain, fontSize: 14, fontWeight: FontWeight.w600)), const SizedBox(height: 6), const Text('Ajoutez un lien vers votre maquette BIM ou modèle Sketchfab', style: TextStyle(color: kTextSub, fontSize: 12), textAlign: TextAlign.center), const SizedBox(height: 20), OutlinedButton.icon(onPressed: () => setState(() => _showForm = true), icon: const Icon(LucideIcons.link, size: 14, color: kAccent), label: const Text('Ajouter un lien 3D', style: TextStyle(color: kAccent, fontWeight: FontWeight.w600, fontSize: 13)), style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10), side: const BorderSide(color: kAccent), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))))]),
-          ),  const SizedBox(height: 20),
+        ),const SizedBox(height: 20),
       Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB))), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('Formats & Plateformes supportés', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: kTextMain)), const SizedBox(height: 12), Wrap(spacing: 8, runSpacing: 8, children: [for (final p in ['Sketchfab', 'Autodesk BIM 360', 'Speckle', 'Trimble Connect', 'Archicad BIMx', 'Autre lien iframe']) Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: const Color(0xFFE5E7EB))), child: Text(p, style: const TextStyle(fontSize: 12, color: kTextSub)))])])),
     ]));
   }
