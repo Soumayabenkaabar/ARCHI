@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:archi_manager/models/notification.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -22,6 +24,9 @@ import '../service/project_member_service.dart';
 import '../service/projet_service.dart';
 import '../service/membre_service.dart';
 import '../service/auth_service.dart';
+import '../service/model3d_service.dart';
+import '../models/model3d.dart';
+import '../utils/glb_parser.dart';
 import '../widgets/sidebar_widget.dart';
 
 
@@ -390,6 +395,7 @@ class _TachesTab extends StatefulWidget {
 class _TachesTabState extends State<_TachesTab> {
   List<Tache> taches = [];
   List<Phase> phases = [];
+  Model3D? _model3D;
   bool loading    = true;
   bool _showGantt = false;
 
@@ -400,10 +406,12 @@ class _TachesTabState extends State<_TachesTab> {
       final results = await Future.wait([
         TacheService.getTaches(widget.project.id),
         PhaseService.getPhases(widget.project.id),
+        Model3DService.getModel(widget.project.id).catchError((_) => null),
       ]);
       setState(() {
         taches  = results[0] as List<Tache>;
         phases  = results[1] as List<Phase>;
+        _model3D = results[2] as Model3D?;
         loading = false;
       });
     } catch (_) { setState(() => loading = false); }
@@ -611,9 +619,30 @@ class _TachesTabState extends State<_TachesTab> {
     final finCtrl       = TextEditingController(text: existing?.dateFin ?? '');
     final budgetCtrl    = TextEditingController(text: existing != null && existing.budgetEstime > 0 ? existing.budgetEstime.toInt().toString() : '');
     final remarquesCtrl = TextEditingController(text: existing?.remarques ?? '');
-    String  statut  = existing?.statut ?? 'en_attente';
-    String? phaseId = existing?.phaseId ?? preselectedPhaseId;
-    final isEdit    = existing != null;
+    String  statut      = existing?.statut ?? 'en_attente';
+    String? phaseId     = existing?.phaseId ?? preselectedPhaseId;
+    final isEdit        = existing != null;
+    final hasMesh       = _model3D != null && _model3D!.meshNames.isNotEmpty;
+
+    // Mesh selection state
+    final selectedMeshes = Set<String>.from(existing?.meshNames ?? []);
+
+    // Mini 3D viewer controller (only if model available)
+    WebViewController? viewerCtrl;
+    Timer? _pollTimer;
+
+    if (hasMesh) {
+      viewerCtrl = WebViewController()
+        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+        ..addJavaScriptChannel('FlutterChannel', onMessageReceived: (_) {})
+        ..loadHtmlString(_buildViewerHtml(_model3D!.url));
+    }
+
+    void highlightSelected(void Function(void Function()) sd) {
+      if (viewerCtrl == null) return;
+      final namesJson = jsonEncode(selectedMeshes.toList());
+      viewerCtrl!.runJavaScript('highlightMeshes($namesJson);');
+    }
 
     Future<void> pickDate(BuildContext ctx, TextEditingController ctrl, {DateTime? firstDate}) async {
       DateTime initial = DateTime.now();
@@ -628,96 +657,226 @@ class _TachesTabState extends State<_TachesTab> {
     }
 
     showDialog(context: context, builder: (_) => StatefulBuilder(builder: (ctx, sd) {
+      // Poll viewer for mesh clicks (works on web where JS channels are limited)
+      _pollTimer ??= Timer.periodic(const Duration(milliseconds: 600), (_) async {
+        if (viewerCtrl == null) return;
+        try {
+          final res = await viewerCtrl!.runJavaScriptReturningResult(
+            'JSON.stringify(window._pendingClicks||[])',
+          );
+          final raw = res is String ? res : res.toString();
+          final clicks = jsonDecode(raw.replaceAll('"', '"').replaceAll('"', '"')) as List;
+          if (clicks.isNotEmpty) {
+            await viewerCtrl!.runJavaScript('window._pendingClicks=[];');
+            for (final name in clicks) {
+              final meshName = name.toString();
+              sd(() {
+                if (selectedMeshes.contains(meshName)) selectedMeshes.remove(meshName);
+                else selectedMeshes.add(meshName);
+              });
+              highlightSelected(sd);
+              // Confirmation popup
+              if (ctx.mounted) {
+                showDialog(context: ctx, builder: (_) => AlertDialog(
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+                  contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                  title: Row(children: [
+                    Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: kAccent.withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: const Icon(LucideIcons.box, size: 16, color: kAccent)),
+                    const SizedBox(width: 12),
+                    const Text('Partie sélectionnée', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: kTextMain)),
+                  ]),
+                  content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: const Color(0xFFF0FDF4), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFF10B981).withOpacity(0.3))), child: Row(children: [
+                      const Icon(LucideIcons.checkCircle, size: 14, color: Color(0xFF10B981)),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(meshName, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: kTextMain))),
+                    ])),
+                    const SizedBox(height: 8),
+                    Text(selectedMeshes.contains(meshName) ? '✓ Associée à cette tâche' : 'Désassociée de cette tâche', style: TextStyle(fontSize: 12, color: selectedMeshes.contains(meshName) ? const Color(0xFF10B981) : kTextSub)),
+                  ]),
+                  actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK', style: TextStyle(color: kAccent, fontWeight: FontWeight.w700)))],
+                ));
+              }
+            }
+          }
+        } catch (_) {}
+      });
+
+      final formColumn = Column(children: [
+        if (phases.isNotEmpty) ...[
+          const Align(alignment: Alignment.centerLeft, child: Text('PHASE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5))),
+          const SizedBox(height: 7),
+          Container(
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE5E7EB))),
+            child: DropdownButtonHideUnderline(child: DropdownButton<String?>(
+              value: phaseId, isExpanded: true, padding: const EdgeInsets.symmetric(horizontal: 12),
+              hint: const Text('Aucune phase', style: TextStyle(color: kTextSub, fontSize: 13)),
+              style: const TextStyle(color: kTextMain, fontSize: 13), borderRadius: BorderRadius.circular(8),
+              items: [
+                const DropdownMenuItem<String?>(value: null, child: Text('Aucune phase', style: TextStyle(color: kTextSub))),
+                ...phases.map((ph) => DropdownMenuItem<String?>(value: ph.id, child: Row(children: [const Icon(LucideIcons.layers, size: 13, color: Color(0xFF8B5CF6)), const SizedBox(width: 8), Text(ph.nom)]))),
+              ],
+              onChanged: (v) => sd(() => phaseId = v),
+            )),
+          ),
+          const SizedBox(height: 14),
+        ],
+        _DField(icon: LucideIcons.checkSquare, label: 'TITRE *', hint: 'Ex: Fondations', controller: titreCtrl),
+        const SizedBox(height: 12),
+        _DField(icon: LucideIcons.fileText, label: 'DESCRIPTION', hint: 'Détails de la tâche...', controller: descCtrl, maxLines: 2),
+        const SizedBox(height: 12),
+        const Align(alignment: Alignment.centerLeft, child: Text('DATES', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5))),
+        const SizedBox(height: 7),
+        Row(children: [
+          Expanded(child: GestureDetector(
+            onTap: () async { await pickDate(ctx, debutCtrl); sd(() {}); },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE5E7EB))),
+              child: Row(children: [
+                const Icon(LucideIcons.calendarDays, size: 14, color: kTextSub), const SizedBox(width: 8),
+                Expanded(child: Text(debutCtrl.text.isEmpty ? 'Date début' : debutCtrl.text, style: TextStyle(fontSize: 13, color: debutCtrl.text.isEmpty ? kTextSub : kTextMain))),
+                if (debutCtrl.text.isNotEmpty) GestureDetector(onTap: () { debutCtrl.clear(); sd(() {}); }, child: const Icon(LucideIcons.x, size: 13, color: kTextSub)),
+              ]),
+            ),
+          )),
+          const Padding(padding: EdgeInsets.symmetric(horizontal: 8), child: Text('→', style: TextStyle(color: kTextSub, fontWeight: FontWeight.w600))),
+          Expanded(child: GestureDetector(
+            onTap: () async { DateTime? first; if (debutCtrl.text.isNotEmpty) first = DateTime.tryParse(debutCtrl.text); await pickDate(ctx, finCtrl, firstDate: first); sd(() {}); },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE5E7EB))),
+              child: Row(children: [
+                const Icon(LucideIcons.calendarCheck, size: 14, color: kTextSub), const SizedBox(width: 8),
+                Expanded(child: Text(finCtrl.text.isEmpty ? 'Date fin' : finCtrl.text, style: TextStyle(fontSize: 13, color: finCtrl.text.isEmpty ? kTextSub : kTextMain))),
+                if (finCtrl.text.isNotEmpty) GestureDetector(onTap: () { finCtrl.clear(); sd(() {}); }, child: const Icon(LucideIcons.x, size: 13, color: kTextSub)),
+              ]),
+            ),
+          )),
+        ]),
+        if (debutCtrl.text.isNotEmpty && finCtrl.text.isNotEmpty)
+          Builder(builder: (_) {
+            final d = DateTime.tryParse(debutCtrl.text); final f = DateTime.tryParse(finCtrl.text);
+            if (d != null && f != null && !f.isAfter(d)) return const Padding(padding: EdgeInsets.only(top: 6), child: Row(children: [Icon(LucideIcons.alertCircle, size: 12, color: kRed), SizedBox(width: 5), Text('La date de fin doit être après la date de début', style: TextStyle(fontSize: 11, color: kRed))]));
+            return const SizedBox.shrink();
+          }),
+        const SizedBox(height: 12),
+        _DField(icon: LucideIcons.banknote, label: 'BUDGET PRÉVU (DT)', hint: '50 000', controller: budgetCtrl, keyboardType: TextInputType.number),
+        const SizedBox(height: 12),
+        _DField(icon: LucideIcons.messageSquare, label: 'REMARQUES', hint: 'Notes, observations...', controller: remarquesCtrl, maxLines: 3),
+        const SizedBox(height: 14),
+        const Align(alignment: Alignment.centerLeft, child: Text('STATUT', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5))),
+        const SizedBox(height: 8),
+        Row(children: [
+          for (final s in ['en_attente', 'en_cours', 'termine'])
+            Expanded(child: Padding(
+              padding: EdgeInsets.only(right: s == 'termine' ? 0 : 8),
+              child: GestureDetector(onTap: () => sd(() => statut = s), child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                decoration: BoxDecoration(
+                  color: statut == s ? _tacheColor(s).withOpacity(0.1) : Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: statut == s ? _tacheColor(s) : const Color(0xFFE5E7EB), width: statut == s ? 2 : 1),
+                ),
+                child: Text(_tacheLabel(s), textAlign: TextAlign.center, style: TextStyle(fontSize: 11, fontWeight: statut == s ? FontWeight.w700 : FontWeight.w500, color: statut == s ? _tacheColor(s) : kTextSub)),
+              )),
+            )),
+        ]),
+      ]);
+
+      // Mesh panel (right side when 3D model available)
+      final meshPanel = hasMesh ? Container(
+        width: 340,
+        decoration: const BoxDecoration(color: Color(0xFFF9FAFB), border: Border(left: BorderSide(color: Color(0xFFE5E7EB)))),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          // Mini 3D viewer
+          Container(
+            height: 220,
+            color: const Color(0xFF1F2937),
+            child: ClipRRect(child: WebViewWidget(controller: viewerCtrl!)),
+          ),
+          // Mesh list header
+          Padding(padding: const EdgeInsets.fromLTRB(14, 14, 14, 8), child: Row(children: [
+            const Icon(LucideIcons.box, size: 13, color: kAccent),
+            const SizedBox(width: 6),
+            const Text('PARTIES DU BÂTIMENT', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5)),
+            const Spacer(),
+            if (selectedMeshes.isNotEmpty)
+              Text('${selectedMeshes.length} sél.', style: const TextStyle(fontSize: 10, color: kAccent, fontWeight: FontWeight.w600)),
+          ])),
+          const Padding(padding: EdgeInsets.symmetric(horizontal: 14), child: Text('Cliquez sur le modèle ou sur un chip pour associer une partie à cette tâche.', style: TextStyle(fontSize: 10, color: kTextSub))),
+          const SizedBox(height: 10),
+          // Mesh chips
+          Expanded(child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+            child: Wrap(spacing: 6, runSpacing: 6, children: [
+              for (final name in _model3D!.meshNames)
+                GestureDetector(
+                  onTap: () {
+                    sd(() {
+                      if (selectedMeshes.contains(name)) selectedMeshes.remove(name);
+                      else selectedMeshes.add(name);
+                    });
+                    highlightSelected(sd);
+                    if (selectedMeshes.contains(name)) {
+                      viewerCtrl!.runJavaScript('zoomToMesh(${jsonEncode(name)});');
+                    }
+                    // Popup de confirmation
+                    showDialog(context: ctx, builder: (_) => AlertDialog(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+                      contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                      title: Row(children: [
+                        Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: kAccent.withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: const Icon(LucideIcons.box, size: 16, color: kAccent)),
+                        const SizedBox(width: 12),
+                        const Text('Partie sélectionnée', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: kTextMain)),
+                      ]),
+                      content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: const Color(0xFFF0FDF4), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFF10B981).withOpacity(0.3))), child: Row(children: [
+                          const Icon(LucideIcons.checkCircle, size: 14, color: Color(0xFF10B981)),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: kTextMain))),
+                        ])),
+                        const SizedBox(height: 8),
+                        Text(selectedMeshes.contains(name) ? '✓ Associée à cette tâche' : 'Désassociée de cette tâche', style: TextStyle(fontSize: 12, color: selectedMeshes.contains(name) ? const Color(0xFF10B981) : kTextSub)),
+                      ]),
+                      actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK', style: TextStyle(color: kAccent, fontWeight: FontWeight.w700)))],
+                    ));
+                  },
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: selectedMeshes.contains(name) ? kAccent : Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: selectedMeshes.contains(name) ? kAccent : const Color(0xFFE5E7EB)),
+                    ),
+                    child: Text(name, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: selectedMeshes.contains(name) ? Colors.white : kTextSub)),
+                  ),
+                ),
+            ]),
+          )),
+        ]),
+      ) : null;
+
       return Dialog(
         insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 500),
-          child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: hasMesh ? 860 : 500),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
             _DialogHeader(icon: isEdit ? LucideIcons.pencil : LucideIcons.listPlus, title: isEdit ? 'Modifier la tâche' : 'Nouvelle tâche', subtitle: isEdit ? 'Mettez à jour les informations' : 'Ajoutez une tâche au projet'),
-            Padding(padding: const EdgeInsets.all(20), child: Column(children: [
-              if (phases.isNotEmpty) ...[
-                const Align(alignment: Alignment.centerLeft, child: Text('PHASE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5))),
-                const SizedBox(height: 7),
-                Container(
-                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE5E7EB))),
-                  child: DropdownButtonHideUnderline(child: DropdownButton<String?>(
-                    value: phaseId, isExpanded: true, padding: const EdgeInsets.symmetric(horizontal: 12),
-                    hint: const Text('Aucune phase', style: TextStyle(color: kTextSub, fontSize: 13)),
-                    style: const TextStyle(color: kTextMain, fontSize: 13), borderRadius: BorderRadius.circular(8),
-                    items: [
-                      const DropdownMenuItem<String?>(value: null, child: Text('Aucune phase', style: TextStyle(color: kTextSub))),
-                      ...phases.map((ph) => DropdownMenuItem<String?>(value: ph.id, child: Row(children: [const Icon(LucideIcons.layers, size: 13, color: Color(0xFF8B5CF6)), const SizedBox(width: 8), Text(ph.nom)]))),
-                    ],
-                    onChanged: (v) => sd(() => phaseId = v),
-                  )),
-                ),
-                const SizedBox(height: 14),
-              ],
-              _DField(icon: LucideIcons.checkSquare, label: 'TITRE *', hint: 'Ex: Fondations', controller: titreCtrl),
-              const SizedBox(height: 12),
-              _DField(icon: LucideIcons.fileText, label: 'DESCRIPTION', hint: 'Détails de la tâche...', controller: descCtrl, maxLines: 2),
-              const SizedBox(height: 12),
-              const Align(alignment: Alignment.centerLeft, child: Text('DATES', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5))),
-              const SizedBox(height: 7),
-              Row(children: [
-                Expanded(child: GestureDetector(
-                  onTap: () async { await pickDate(ctx, debutCtrl); sd(() {}); },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE5E7EB))),
-                    child: Row(children: [
-                      const Icon(LucideIcons.calendarDays, size: 14, color: kTextSub), const SizedBox(width: 8),
-                      Expanded(child: Text(debutCtrl.text.isEmpty ? 'Date début' : debutCtrl.text, style: TextStyle(fontSize: 13, color: debutCtrl.text.isEmpty ? kTextSub : kTextMain))),
-                      if (debutCtrl.text.isNotEmpty) GestureDetector(onTap: () { debutCtrl.clear(); sd(() {}); }, child: const Icon(LucideIcons.x, size: 13, color: kTextSub)),
-                    ]),
-                  ),
-                )),
-                const Padding(padding: EdgeInsets.symmetric(horizontal: 8), child: Text('→', style: TextStyle(color: kTextSub, fontWeight: FontWeight.w600))),
-                Expanded(child: GestureDetector(
-                  onTap: () async { DateTime? first; if (debutCtrl.text.isNotEmpty) first = DateTime.tryParse(debutCtrl.text); await pickDate(ctx, finCtrl, firstDate: first); sd(() {}); },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE5E7EB))),
-                    child: Row(children: [
-                      const Icon(LucideIcons.calendarCheck, size: 14, color: kTextSub), const SizedBox(width: 8),
-                      Expanded(child: Text(finCtrl.text.isEmpty ? 'Date fin' : finCtrl.text, style: TextStyle(fontSize: 13, color: finCtrl.text.isEmpty ? kTextSub : kTextMain))),
-                      if (finCtrl.text.isNotEmpty) GestureDetector(onTap: () { finCtrl.clear(); sd(() {}); }, child: const Icon(LucideIcons.x, size: 13, color: kTextSub)),
-                    ]),
-                  ),
-                )),
-              ]),
-              if (debutCtrl.text.isNotEmpty && finCtrl.text.isNotEmpty)
-                Builder(builder: (_) {
-                  final d = DateTime.tryParse(debutCtrl.text); final f = DateTime.tryParse(finCtrl.text);
-                  if (d != null && f != null && !f.isAfter(d)) return const Padding(padding: EdgeInsets.only(top: 6), child: Row(children: [Icon(LucideIcons.alertCircle, size: 12, color: kRed), SizedBox(width: 5), Text('La date de fin doit être après la date de début', style: TextStyle(fontSize: 11, color: kRed))]));
-                  return const SizedBox.shrink();
-                }),
-              const SizedBox(height: 12),
-              _DField(icon: LucideIcons.banknote, label: 'BUDGET PRÉVU (DT)', hint: '50 000', controller: budgetCtrl, keyboardType: TextInputType.number),
-              const SizedBox(height: 12),
-              _DField(icon: LucideIcons.messageSquare, label: 'REMARQUES', hint: 'Notes, observations...', controller: remarquesCtrl, maxLines: 3),
-              const SizedBox(height: 14),
-              const Align(alignment: Alignment.centerLeft, child: Text('STATUT', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5))),
-              const SizedBox(height: 8),
-              Row(children: [
-                for (final s in ['en_attente', 'en_cours', 'termine'])
-                  Expanded(child: Padding(
-                    padding: EdgeInsets.only(right: s == 'termine' ? 0 : 8),
-                    child: GestureDetector(onTap: () => sd(() => statut = s), child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 150),
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      decoration: BoxDecoration(
-                        color: statut == s ? _tacheColor(s).withOpacity(0.1) : Colors.white,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: statut == s ? _tacheColor(s) : const Color(0xFFE5E7EB), width: statut == s ? 2 : 1),
-                      ),
-                      child: Text(_tacheLabel(s), textAlign: TextAlign.center, style: TextStyle(fontSize: 11, fontWeight: statut == s ? FontWeight.w700 : FontWeight.w500, color: statut == s ? _tacheColor(s) : kTextSub)),
-                    )),
-                  )),
-              ]),
-            ])),
+            Flexible(child: hasMesh
+              ? IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  Expanded(child: SingleChildScrollView(padding: const EdgeInsets.all(20), child: formColumn)),
+                  meshPanel!,
+                ]))
+              : SingleChildScrollView(padding: const EdgeInsets.all(20), child: formColumn),
+            ),
             _DialogActions(
-              onCancel: () => Navigator.pop(ctx),
+              onCancel: () { _pollTimer?.cancel(); Navigator.pop(ctx); },
               onConfirm: () async {
                 final titre = titreCtrl.text.trim();
                 if (titre.isEmpty)     { _snack(ctx, 'Titre de la tâche obligatoire', kRed); return; }
@@ -734,7 +893,20 @@ class _TachesTabState extends State<_TachesTab> {
                   final d = DateTime.tryParse(debutCtrl.text); final f = DateTime.tryParse(finCtrl.text);
                   if (d != null && f != null && !f.isAfter(d)) { _snack(ctx, 'La date de fin doit être après la date de début', kRed); return; }
                 }
-                final t = Tache(id: isEdit ? existing!.id : '', projetId: widget.project.id, phaseId: phaseId, titre: titreCtrl.text.trim(), description: descCtrl.text.trim(), statut: statut, dateDebut: debutCtrl.text.trim().isEmpty ? null : debutCtrl.text.trim(), dateFin: finCtrl.text.trim().isEmpty ? null : finCtrl.text.trim(), budgetEstime: double.tryParse(budgetCtrl.text.replaceAll(' ', '')) ?? 0, remarques: remarquesCtrl.text.trim(), createdAt: isEdit ? existing!.createdAt : '');
+                final t = Tache(
+                  id: isEdit ? existing!.id : '',
+                  projetId: widget.project.id,
+                  phaseId: phaseId,
+                  titre: titreCtrl.text.trim(),
+                  description: descCtrl.text.trim(),
+                  statut: statut,
+                  dateDebut: debutCtrl.text.trim().isEmpty ? null : debutCtrl.text.trim(),
+                  dateFin: finCtrl.text.trim().isEmpty ? null : finCtrl.text.trim(),
+                  budgetEstime: double.tryParse(budgetCtrl.text.replaceAll(' ', '')) ?? 0,
+                  remarques: remarquesCtrl.text.trim(),
+                  meshNames: selectedMeshes.toList(),
+                  createdAt: isEdit ? existing!.createdAt : '',
+                );
                 if (isEdit) {
                   if (statut != existing!.statut) await TacheService.updateStatut(t.id, statut, projetId: widget.project.id, ancienStatut: existing.statut, budgetEstime: t.budgetEstime);
                   await TacheService.updateTache(t);
@@ -743,15 +915,74 @@ class _TachesTabState extends State<_TachesTab> {
                   await TacheService.addTache(t);
                   _snack(context, 'Tâche ajoutée', kAccent);
                 }
-                Navigator.pop(ctx); _load();
+                _pollTimer?.cancel();
+                Navigator.pop(ctx);
+                _load();
               },
               label: isEdit ? 'Enregistrer' : 'Ajouter',
             ),
-          ])),
+          ]),
         ),
       );
     }));
   }
+
+  // HTML Three.js viewer template
+  String _buildViewerHtml(String modelUrl) => '''
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#1F2937;overflow:hidden}
+#load{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);color:#9CA3AF;font-family:Arial;font-size:12px}
+</style></head><body>
+<div id="load">Chargement...</div>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+window._pendingClicks=[];
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x1F2937);
+const W=window.innerWidth,H=window.innerHeight;
+const camera=new THREE.PerspectiveCamera(45,W/H,0.01,1000);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(window.devicePixelRatio);renderer.setSize(W,H);
+document.body.appendChild(renderer.domElement);
+const controls=new OrbitControls(camera,renderer.domElement);
+controls.enableDamping=true;controls.dampingFactor=0.05;
+scene.add(new THREE.AmbientLight(0xffffff,0.8));
+const d=new THREE.DirectionalLight(0xffffff,0.9);d.position.set(10,10,5);scene.add(d);
+const meshMap={},origMat={};
+new GLTFLoader().load('${modelUrl.replaceAll("'", "\\'")}', gltf=>{
+  document.getElementById('load').style.display='none';
+  scene.add(gltf.scene);
+  const box=new THREE.Box3().setFromObject(gltf.scene);
+  const center=box.getCenter(new THREE.Vector3());
+  const size=box.getSize(new THREE.Vector3());
+  const maxD=Math.max(size.x,size.y,size.z)||1;
+  gltf.scene.position.sub(center);
+  camera.position.set(maxD*1.5,maxD,maxD*1.5);controls.target.set(0,0,0);controls.update();
+  gltf.scene.traverse(obj=>{
+    if(obj.isMesh){const n=obj.name||'Mesh_'+Object.keys(meshMap).length;obj.name=n;meshMap[n]=obj;
+    origMat[n]=Array.isArray(obj.material)?obj.material.map(m=>m.clone()):obj.material?obj.material.clone():new THREE.MeshStandardMaterial();}
+  });
+},undefined,e=>document.getElementById('load').textContent='Erreur: '+e.message);
+window.highlightMeshes=names=>{
+  const ns=new Set(names);
+  Object.entries(meshMap).forEach(([n,m])=>{const o=origMat[n];m.material=Array.isArray(o)?o.map(x=>x.clone()):o?o.clone():new THREE.MeshStandardMaterial();});
+  ns.forEach(n=>{if(meshMap[n])meshMap[n].material=new THREE.MeshStandardMaterial({color:0x3B82F6,emissive:0x1d4ed8,emissiveIntensity:0.4,transparent:true,opacity:0.9});});
+};
+window.zoomToMesh=n=>{const m=meshMap[n];if(!m)return;const b=new THREE.Box3().setFromObject(m);const c=b.getCenter(new THREE.Vector3());const s=b.getSize(new THREE.Vector3());const mx=Math.max(s.x,s.y,s.z)||1;controls.target.copy(c);camera.position.set(c.x+mx*2,c.y+mx,c.z+mx*2);controls.update();};
+const ray=new THREE.Raycaster(),mouse=new THREE.Vector2();
+renderer.domElement.addEventListener('click',e=>{
+  const r=renderer.domElement.getBoundingClientRect();
+  mouse.x=((e.clientX-r.left)/r.width)*2-1;mouse.y=-((e.clientY-r.top)/r.height)*2+1;
+  ray.setFromCamera(mouse,camera);
+  const hits=ray.intersectObjects(Object.values(meshMap),false);
+  if(hits.length>0)window._pendingClicks.push(hits[0].object.name);
+});
+window.addEventListener('resize',()=>{camera.aspect=window.innerWidth/window.innerHeight;camera.updateProjectionMatrix();renderer.setSize(window.innerWidth,window.innerHeight);});
+(function animate(){requestAnimationFrame(animate);controls.update();renderer.render(scene,camera);}());
+</script></body></html>
+''';
 
   void _showViewDialog(BuildContext context, Tache t) {
     final color = _tacheColor(t.statut);
@@ -3606,40 +3837,279 @@ class _Modele3DTab extends StatefulWidget {
   @override State<_Modele3DTab> createState() => _Modele3DTabState();
 }
 class _Modele3DTabState extends State<_Modele3DTab> {
-  final _urlCtrl = TextEditingController();
-  String? _savedUrl; bool _showForm = false;
-  @override void dispose() { _urlCtrl.dispose(); super.dispose(); }
+  Model3D? _model;
+  bool _loading = true;
+  bool _uploading = false;
+  WebViewController? _viewerCtrl;
+  final Set<String> _highlighted = {};
+
+  @override
+  void initState() { super.initState(); _loadModel(); }
+
+  Future<void> _loadModel() async {
+    try {
+      final m = await Model3DService.getModel(widget.project.id);
+      setState(() { _model = m; _loading = false; });
+      if (m != null) _initViewer(m.url);
+    } catch (_) { setState(() => _loading = false); }
+  }
+
+  void _initViewer(String url) {
+    final ctrl = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..addJavaScriptChannel('FlutterChannel', onMessageReceived: (msg) {
+        try {
+          final data = jsonDecode(msg.message) as Map<String, dynamic>;
+          if (data['type'] == 'meshClicked') _onMeshClicked(data['name'] as String);
+        } catch (_) {}
+      })
+      ..loadHtmlString(_buildFullViewerHtml(url));
+    setState(() { _viewerCtrl = ctrl; _highlighted.clear(); });
+  }
+
+  Future<void> _upload() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['glb'],
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty || result.files.first.bytes == null) return;
+    final file = result.files.first;
+    setState(() => _uploading = true);
+    try {
+      final url = await Model3DService.uploadGlb(widget.project.id, file.bytes!, file.name);
+      final meshNames = GlbParser.extractMeshNames(file.bytes!);
+      final model = await Model3DService.saveModel(widget.project.id, url, meshNames);
+      setState(() { _model = model; _uploading = false; });
+      _initViewer(url);
+      if (mounted) _snack(context, '✓ Modèle chargé — ${meshNames.length} mesh(es) détectés', kAccent);
+    } catch (e) {
+      setState(() => _uploading = false);
+      if (mounted) _snack(context, 'Erreur upload: $e', kRed);
+    }
+  }
+
+  Future<void> _deleteModel() async {
+    await Model3DService.deleteModel(widget.project.id);
+    setState(() { _model = null; _viewerCtrl = null; _highlighted.clear(); });
+  }
+
+  void _toggleHighlight(String name) {
+    setState(() {
+      if (_highlighted.contains(name)) _highlighted.remove(name);
+      else _highlighted.add(name);
+    });
+    _viewerCtrl?.runJavaScript('highlightMeshes(${jsonEncode(_highlighted.toList())});');
+    if (_highlighted.contains(name)) {
+      _viewerCtrl?.runJavaScript('zoomToMesh(${jsonEncode(name)});');
+    }
+  }
+
+  void _onMeshClicked(String name) {
+    _toggleHighlight(name);
+    if (!mounted) return;
+    showDialog(context: context, builder: (_) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Row(children: [
+        Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: kAccent.withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: const Icon(LucideIcons.box, size: 16, color: kAccent)),
+        const SizedBox(width: 12),
+        const Text('Partie sélectionnée', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: kTextMain)),
+      ]),
+      content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(color: const Color(0xFFF0FDF4), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFF10B981).withOpacity(0.3))),
+          child: Row(children: [const Icon(LucideIcons.checkCircle, size: 14, color: Color(0xFF10B981)), const SizedBox(width: 8), Expanded(child: Text(name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: kTextMain)))])),
+        const SizedBox(height: 8),
+        Text(_highlighted.contains(name) ? '✓ Surbrillance activée' : 'Surbrillance désactivée', style: TextStyle(fontSize: 12, color: _highlighted.contains(name) ? const Color(0xFF10B981) : kTextSub)),
+      ]),
+      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK', style: TextStyle(color: kAccent, fontWeight: FontWeight.w700)))],
+    ));
+  }
+
+  String _buildFullViewerHtml(String url) {
+    final safeUrl = url.replaceAll("'", "\\'");
+    return '''<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#1F2937;overflow:hidden}
+#load{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);color:#9CA3AF;font-family:Arial;font-size:13px;text-align:center}
+#hint{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);color:rgba(255,255,255,0.5);font-family:Arial;font-size:11px;pointer-events:none}
+</style></head><body>
+<div id="load">⏳ Chargement du modèle 3D...</div>
+<div id="hint">Cliquez sur une partie pour la sélectionner · Faites glisser pour pivoter</div>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+window._pendingClicks=[];
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x1F2937);
+const camera=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,0.01,1000);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(devicePixelRatio);renderer.setSize(innerWidth,innerHeight);
+document.body.appendChild(renderer.domElement);
+const ctrl=new OrbitControls(camera,renderer.domElement);ctrl.enableDamping=true;
+scene.add(new THREE.AmbientLight(0xffffff,0.8));
+const dl=new THREE.DirectionalLight(0xffffff,0.9);dl.position.set(10,10,5);scene.add(dl);
+const meshMap={},origMat={};
+new GLTFLoader().load('$safeUrl',gltf=>{
+  document.getElementById('load').style.display='none';
+  scene.add(gltf.scene);
+  const box=new THREE.Box3().setFromObject(gltf.scene);
+  const ctr=box.getCenter(new THREE.Vector3()),sz=box.getSize(new THREE.Vector3());
+  const mx=Math.max(sz.x,sz.y,sz.z)||1;
+  gltf.scene.position.sub(ctr);camera.position.set(mx*1.5,mx,mx*1.5);ctrl.target.set(0,0,0);ctrl.update();
+  gltf.scene.traverse(o=>{if(o.isMesh){const n=o.name||'Mesh_'+Object.keys(meshMap).length;o.name=n;meshMap[n]=o;origMat[n]=Array.isArray(o.material)?o.material.map(m=>m.clone()):o.material?o.material.clone():new THREE.MeshStandardMaterial();}});
+  const names=Object.keys(meshMap);
+  if(window.FlutterChannel)window.FlutterChannel.postMessage(JSON.stringify({type:'meshList',names}));
+  window.parent&&window.parent.postMessage(JSON.stringify({type:'meshList',names}),'*');
+},undefined,e=>document.getElementById('load').textContent='Erreur: '+e.message);
+window.highlightMeshes=ns=>{
+  const s=new Set(ns);
+  Object.entries(meshMap).forEach(([n,m])=>{const o=origMat[n];m.material=Array.isArray(o)?o.map(x=>x.clone()):o?o.clone():new THREE.MeshStandardMaterial();});
+  s.forEach(n=>{if(meshMap[n])meshMap[n].material=new THREE.MeshStandardMaterial({color:0x3B82F6,emissive:0x1d4ed8,emissiveIntensity:0.4,transparent:true,opacity:0.9});});
+};
+window.zoomToMesh=n=>{const m=meshMap[n];if(!m)return;const b=new THREE.Box3().setFromObject(m);const c=b.getCenter(new THREE.Vector3());const s=b.getSize(new THREE.Vector3());const mx=Math.max(s.x,s.y,s.z)||1;ctrl.target.copy(c);camera.position.set(c.x+mx*2,c.y+mx,c.z+mx*2);ctrl.update();};
+const ray=new THREE.Raycaster(),mouse=new THREE.Vector2();
+renderer.domElement.addEventListener('click',e=>{
+  const r=renderer.domElement.getBoundingClientRect();
+  mouse.x=((e.clientX-r.left)/r.width)*2-1;mouse.y=-((e.clientY-r.top)/r.height)*2+1;
+  ray.setFromCamera(mouse,camera);
+  const hits=ray.intersectObjects(Object.values(meshMap),false);
+  if(hits.length){const name=hits[0].object.name;window._pendingClicks.push(name);
+  if(window.FlutterChannel)window.FlutterChannel.postMessage(JSON.stringify({type:'meshClicked',name}));
+  window.parent&&window.parent.postMessage(JSON.stringify({type:'meshClicked',name}),'*');}
+});
+window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+(function animate(){requestAnimationFrame(animate);ctrl.update();renderer.render(scene,camera);}());
+</script></body></html>''';
+  }
 
   @override
   Widget build(BuildContext context) {
-    final isMobile = MediaQuery.of(context).size.width < 800; final pad = isMobile ? 16.0 : 28.0;
-    return SingleChildScrollView(padding: EdgeInsets.fromLTRB(pad, pad, pad, pad + 20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Modèle 3D', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: kTextMain)), SizedBox(height: 4), Text('Intégrez un lien vers votre maquette numérique BIM.', style: TextStyle(color: kTextSub, fontSize: 12))])), if (!_showForm) ElevatedButton.icon(onPressed: () => setState(() => _showForm = true), icon: const Icon(LucideIcons.link, size: 14, color: Colors.white), label: Text(isMobile ? 'Lien' : 'Ajouter un lien', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12)), style: ElevatedButton.styleFrom(backgroundColor: kAccent, elevation: 0, padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))))]),
-      const SizedBox(height: 24),
-      if (_showForm) ...[
-        Container(padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB))), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('LIEN DU MODÈLE 3D', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5)),
-          const SizedBox(height: 8),
-          const Text('Formats supportés : Sketchfab, Autodesk Viewer, BIM 360, Speckle, ou tout lien iframe.', style: TextStyle(color: kTextSub, fontSize: 12)),
-          const SizedBox(height: 12),
-          TextField(controller: _urlCtrl, decoration: InputDecoration(hintText: 'https://sketchfab.com/models/...', prefixIcon: const Icon(LucideIcons.link, size: 14, color: kTextSub), border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFFE5E7EB))), enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFFE5E7EB))), focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: kAccent, width: 2)), contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12))),
-          const SizedBox(height: 12),
-          Row(children: [Expanded(child: OutlinedButton(onPressed: () => setState(() { _showForm = false; _urlCtrl.clear(); }), style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12), side: const BorderSide(color: Color(0xFFD1D5DB)), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))), child: const Text('Annuler', style: TextStyle(color: kTextSub)))), const SizedBox(width: 10), Expanded(child: ElevatedButton(onPressed: () { final url = _urlCtrl.text.trim(); if (url.isEmpty) { _snack(context, 'URL obligatoire', kRed); return; } setState(() { _savedUrl = url; _showForm = false; }); _snack(context, 'Lien enregistré', kAccent); }, style: ElevatedButton.styleFrom(backgroundColor: kAccent, elevation: 0, padding: const EdgeInsets.symmetric(vertical: 12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))), child: const Text('Enregistrer', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700))))]),
-        ])),
-        const SizedBox(height: 20),
-      ],
-      if (_savedUrl != null)
-        Container(decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: const Color(0xFFE5E7EB)), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))]), child: Column(children: [
-          Container(padding: const EdgeInsets.fromLTRB(16, 14, 16, 14), decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB)))), child: Row(children: [Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: kAccent.withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: const Icon(LucideIcons.box, size: 16, color: kAccent)), const SizedBox(width: 12), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('Maquette numérique', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: kTextMain)), Text(_savedUrl!, style: const TextStyle(color: kTextSub, fontSize: 11), overflow: TextOverflow.ellipsis)])), Row(children: [GestureDetector(onTap: () async { final uri = Uri.tryParse(_savedUrl!); if (uri != null) try { await launchUrl(uri, mode: LaunchMode.externalApplication); } catch (_) {} }, child: Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: const Color(0xFFEFF6FF), borderRadius: BorderRadius.circular(8)), child: const Icon(LucideIcons.externalLink, size: 16, color: Color(0xFF3B82F6)))), const SizedBox(width: 8), GestureDetector(onTap: () => setState(() { _savedUrl = null; _urlCtrl.clear(); }), child: Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: const Color(0xFFFEF2F2), borderRadius: BorderRadius.circular(8)), child: const Icon(LucideIcons.trash2, size: 16, color: kRed)))])])),
-          Container(height: 280, width: double.infinity, decoration: BoxDecoration(color: const Color(0xFF1F2937), borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16))), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: Colors.white.withOpacity(0.1), shape: BoxShape.circle), child: const Icon(LucideIcons.box, size: 40, color: Colors.white70)), const SizedBox(height: 16), const Text('Cliquez sur "Ouvrir" pour visualiser le modèle', style: TextStyle(color: Colors.white70, fontSize: 14)), const SizedBox(height: 8), const Text('Le viewer 3D s\'ouvrira dans votre navigateur', style: TextStyle(color: Colors.white38, fontSize: 12)), const SizedBox(height: 20), OutlinedButton.icon(onPressed: () async { final uri = Uri.tryParse(_savedUrl!); if (uri != null) try { await launchUrl(uri, mode: LaunchMode.externalApplication); } catch (_) {} }, icon: const Icon(LucideIcons.externalLink, size: 14, color: Colors.white), label: const Text('Ouvrir le modèle 3D', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)), style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.white38), padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))))])),
-        ]))
-      else if (!_showForm)
-        Container(width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 60, horizontal: 24), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: const Color(0xFFE5E7EB))), child: Column(children: [Container(width: 64, height: 64, decoration: BoxDecoration(color: kAccent.withOpacity(0.08), borderRadius: BorderRadius.circular(16)), child: Icon(LucideIcons.box, size: 28, color: kAccent.withOpacity(0.6))), const SizedBox(height: 16), const Text('Aucun modèle 3D pour ce projet', style: TextStyle(color: kTextMain, fontSize: 14, fontWeight: FontWeight.w600)), const SizedBox(height: 6), const Text('Ajoutez un lien vers votre maquette BIM ou modèle Sketchfab', style: TextStyle(color: kTextSub, fontSize: 12), textAlign: TextAlign.center), const SizedBox(height: 20), OutlinedButton.icon(onPressed: () => setState(() => _showForm = true), icon: const Icon(LucideIcons.link, size: 14, color: kAccent), label: const Text('Ajouter un lien 3D', style: TextStyle(color: kAccent, fontWeight: FontWeight.w600, fontSize: 13)), style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10), side: const BorderSide(color: kAccent), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))))]),
-      
+    final isMobile = MediaQuery.of(context).size.width < 800;
+    final pad = isMobile ? 16.0 : 28.0;
+
+    if (_loading) return const Center(child: CircularProgressIndicator(color: kAccent));
+
+    // ── Viewer + mesh panel layout ────────────────────────────────────────
+    if (_model != null && _viewerCtrl != null) {
+      return Column(children: [
+        // Toolbar
+        Container(
+          padding: EdgeInsets.symmetric(horizontal: pad, vertical: 12),
+          color: kCardBg,
+          child: Row(children: [
+            Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: kAccent.withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: const Icon(LucideIcons.box, size: 16, color: kAccent)),
+            const SizedBox(width: 12),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Maquette numérique 3D', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: kTextMain)),
+              Text('${_model!.meshNames.length} mesh(es) · cliquez pour sélectionner', style: const TextStyle(color: kTextSub, fontSize: 11)),
+            ])),
+            if (_highlighted.isNotEmpty)
+              Container(margin: const EdgeInsets.only(right: 8), padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: kAccent.withOpacity(0.1), borderRadius: BorderRadius.circular(20)), child: Text('${_highlighted.length} sél.', style: const TextStyle(color: kAccent, fontSize: 11, fontWeight: FontWeight.w700))),
+            if (_highlighted.isNotEmpty)
+              IconButton(icon: const Icon(LucideIcons.x, size: 14, color: kTextSub), tooltip: 'Tout désélectionner', onPressed: () { setState(() => _highlighted.clear()); _viewerCtrl?.runJavaScript('highlightMeshes([]);'); }),
+            const SizedBox(width: 4),
+            ElevatedButton.icon(
+              onPressed: _uploading ? null : _upload,
+              icon: _uploading ? const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(LucideIcons.upload, size: 13, color: Colors.white),
+              label: const Text('Remplacer', style: TextStyle(color: Colors.white, fontSize: 12)),
+              style: ElevatedButton.styleFrom(backgroundColor: kAccent, elevation: 0, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+            ),
+            const SizedBox(width: 8),
+            IconButton(icon: const Icon(LucideIcons.trash2, size: 16, color: kRed), tooltip: 'Supprimer le modèle', onPressed: () async {
+              final ok = await showDialog<bool>(context: context, builder: (_) => AlertDialog(
+                title: const Text('Supprimer le modèle ?'),
+                content: const Text('Cette action est irréversible.'),
+                actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Annuler')), TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Supprimer', style: TextStyle(color: kRed)))],
+              ));
+              if (ok == true) _deleteModel();
+            }),
+          ]),
         ),
-        const SizedBox(height: 20),
-      Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB))), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('Formats & Plateformes supportés', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: kTextMain)), const SizedBox(height: 12), Wrap(spacing: 8, runSpacing: 8, children: [for (final p in ['Sketchfab', 'Autodesk BIM 360', 'Speckle', 'Trimble Connect', 'Archicad BIMx', 'Autre lien iframe']) Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: const Color(0xFFE5E7EB))), child: Text(p, style: const TextStyle(fontSize: 12, color: kTextSub)))])])),
-    ]));
+        // Main area: 3D viewer + mesh list panel
+        Expanded(child: isMobile
+          ? Column(children: [
+              Expanded(child: WebViewWidget(controller: _viewerCtrl!)),
+              _buildMeshPanel(),
+            ])
+          : Row(children: [
+              Expanded(child: WebViewWidget(controller: _viewerCtrl!)),
+              _buildMeshPanel(),
+            ]),
+        ),
+      ]);
+    }
+
+    // ── Empty state: upload prompt ────────────────────────────────────────
+    return SingleChildScrollView(
+      padding: EdgeInsets.all(pad),
+      child: Center(child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 480),
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          const SizedBox(height: 40),
+          Container(width: 80, height: 80, decoration: BoxDecoration(color: kAccent.withOpacity(0.08), borderRadius: BorderRadius.circular(20)), child: Icon(LucideIcons.box, size: 36, color: kAccent.withOpacity(0.6))),
+          const SizedBox(height: 20),
+          const Text('Aucun modèle 3D', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: kTextMain)),
+          const SizedBox(height: 8),
+          const Text('Uploadez un fichier .glb avec des meshes nommés (ex: Wall_Salon, Door_Main, Roof) pour activer la sélection par parties.', style: TextStyle(color: kTextSub, fontSize: 13), textAlign: TextAlign.center),
+          const SizedBox(height: 28),
+          ElevatedButton.icon(
+            onPressed: _uploading ? null : _upload,
+            icon: _uploading
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : const Icon(LucideIcons.upload, size: 16, color: Colors.white),
+            label: Text(_uploading ? 'Upload en cours...' : 'Uploader un modèle .glb', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
+            style: ElevatedButton.styleFrom(backgroundColor: kAccent, elevation: 0, padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+          ),
+          const SizedBox(height: 28),
+          Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB))), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('Convention de nommage recommandée', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12, color: kTextMain)),
+            const SizedBox(height: 10),
+            Wrap(spacing: 6, runSpacing: 6, children: [
+              for (final n in ['Wall_Salon', 'Wall_Chambre', 'Door_Main', 'Door_Garage', 'Roof', 'Floor_RDC', 'Floor_R1', 'Window_Sud', 'Stairs', 'Facade_Nord'])
+                Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: const Color(0xFFE5E7EB))), child: Text(n, style: const TextStyle(fontSize: 11, color: kTextSub, fontFamily: 'monospace'))),
+            ]),
+          ])),
+        ]),
+      )),
+    );
+  }
+
+  Widget _buildMeshPanel() {
+    final meshNames = _model?.meshNames ?? [];
+    return Container(
+      width: 240,
+      decoration: const BoxDecoration(color: Color(0xFFF9FAFB), border: Border(left: BorderSide(color: Color(0xFFE5E7EB)))),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Padding(padding: const EdgeInsets.fromLTRB(14, 14, 14, 8), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('PARTIES DU BÂTIMENT', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5)),
+          const SizedBox(height: 4),
+          const Text('Cliquez sur le modèle ou sur un chip pour surligner.', style: TextStyle(fontSize: 10, color: kTextSub)),
+        ])),
+        const Divider(height: 1, color: Color(0xFFE5E7EB)),
+        Expanded(child: meshNames.isEmpty
+          ? const Center(child: Text('Aucun mesh nommé\ndétecté', style: TextStyle(color: kTextSub, fontSize: 12), textAlign: TextAlign.center))
+          : ListView(padding: const EdgeInsets.all(12), children: [
+              Wrap(spacing: 6, runSpacing: 6, children: [
+                for (final name in meshNames)
+                  GestureDetector(
+                    onTap: () => _toggleHighlight(name),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: _highlighted.contains(name) ? kAccent : Colors.white,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: _highlighted.contains(name) ? kAccent : const Color(0xFFE5E7EB)),
+                      ),
+                      child: Text(name, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _highlighted.contains(name) ? Colors.white : kTextSub)),
+                    ),
+                  ),
+              ]),
+            ]),
+        ),
+      ]),
+    );
   }
 }
 
@@ -3652,51 +4122,264 @@ class _CommentairesTab extends StatefulWidget {
   const _CommentairesTab({required this.project, required this.onCountChanged});
   @override State<_CommentairesTab> createState() => _CommentairesTabState();
 }
+
 class _CommentairesTabState extends State<_CommentairesTab> {
-  List<Commentaire> commentaires = []; bool loading = true;
-  final _ctrl = TextEditingController(); final _scroll = ScrollController();
+  List<Commentaire> commentaires = [];
+  bool loading = true;
+  Commentaire? _replyingTo;
+  final _ctrl   = TextEditingController();
+  final _scroll = ScrollController();
+
   @override void initState() { super.initState(); _load(); }
-  @override void dispose() { _ctrl.dispose(); _scroll.dispose(); super.dispose(); }
+  @override void dispose()   { _ctrl.dispose(); _scroll.dispose(); super.dispose(); }
+
   Future<void> _load() async {
     try {
       final data = await CommentaireService.getCommentaires(widget.project.id);
       setState(() { commentaires = data; loading = false; });
       widget.onCountChanged(data.length);
-      Future.delayed(const Duration(milliseconds: 100), () { if (_scroll.hasClients) _scroll.jumpTo(_scroll.position.maxScrollExtent); });
-    } catch (e) { setState(() => loading = false); }
+      Future.delayed(const Duration(milliseconds: 120), () {
+        if (_scroll.hasClients) _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      });
+    } catch (_) { setState(() => loading = false); }
   }
+
   Future<void> _send() async {
-    final text = _ctrl.text.trim(); if (text.isEmpty) { _snack(context, 'Message vide', kRed); return; }
+    final raw = _ctrl.text.trim();
+    if (raw.isEmpty) { _snack(context, 'Message vide', kRed); return; }
+    final contenu = _replyingTo != null
+        ? '↩ En réponse à "${_replyingTo!.auteur}" :\n« ${_replyingTo!.contenu.length > 80 ? '${_replyingTo!.contenu.substring(0, 80)}…' : _replyingTo!.contenu} »\n\n$raw'
+        : raw;
     _ctrl.clear();
-    await CommentaireService.addCommentaire(Commentaire(id: '', projetId: widget.project.id, auteur: widget.project.chef.isEmpty ? 'Architecte' : widget.project.chef, role: 'architecte', contenu: text, createdAt: DateTime.now().toIso8601String()));
+    setState(() => _replyingTo = null);
+    final nom = AuthService.currentUser?.fullName;
+    final auteur = (nom != null && nom.isNotEmpty) ? nom : (widget.project.chef.isNotEmpty ? widget.project.chef : 'Architecte');
+    await CommentaireService.addCommentaire(Commentaire(
+      id: '', projetId: widget.project.id,
+      auteur: auteur, role: 'architecte',
+      contenu: contenu, createdAt: DateTime.now().toIso8601String(),
+    ));
     _load();
   }
+
   @override
   Widget build(BuildContext context) {
-    final isMobile = MediaQuery.of(context).size.width < 800; final pad = isMobile ? 16.0 : 28.0;
+    final isMobile = MediaQuery.of(context).size.width < 800;
+    final pad = isMobile ? 16.0 : 28.0;
     if (loading) return const Center(child: CircularProgressIndicator(color: kAccent));
+
+    final clientCount = commentaires.where((c) => c.role == 'client').length;
+    final archiCount  = commentaires.where((c) => c.role == 'architecte').length;
+
     return Padding(padding: EdgeInsets.all(pad), child: Column(children: [
-      Expanded(child: Container(decoration: BoxDecoration(color: kCardBg, borderRadius: BorderRadius.circular(14), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 6, offset: const Offset(0, 2))]), child: Column(children: [
-        Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 10), child: Row(children: [const Icon(LucideIcons.messageSquare, size: 16, color: kTextSub), const SizedBox(width: 8), const Text('Fil de discussion', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: kTextMain)), const Spacer(), Text('${commentaires.length} message(s)', style: const TextStyle(color: kTextSub, fontSize: 12))])),
-        const Divider(height: 1, color: Color(0xFFF3F4F6)),
-        Expanded(child: commentaires.isEmpty ? _EmptyState(icon: LucideIcons.messageCircle, message: 'Aucun message') : ListView.builder(controller: _scroll, padding: const EdgeInsets.all(16), itemCount: commentaires.length, itemBuilder: (_, i) => _BubbleRow(commentaire: commentaires[i]))),
-      ]))),
-      const SizedBox(height: 12),
-      Container(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10), decoration: BoxDecoration(color: kCardBg, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB))), child: Row(children: [Expanded(child: TextField(controller: _ctrl, onSubmitted: (_) => _send(), style: const TextStyle(fontSize: 13, color: kTextMain), decoration: const InputDecoration(hintText: 'Écrire un commentaire...', hintStyle: TextStyle(color: kTextSub), border: InputBorder.none, isDense: true, contentPadding: EdgeInsets.zero))), GestureDetector(onTap: _send, child: Container(width: 36, height: 36, decoration: BoxDecoration(color: kAccent, borderRadius: BorderRadius.circular(8)), child: const Icon(Icons.send_rounded, color: Colors.white, size: 16)))])),
+      // ── Stats header ────────────────────────────────────────────────────
+      Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(color: kCardBg, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB))),
+        child: Row(children: [
+          const Icon(LucideIcons.messageSquare, size: 15, color: kTextSub),
+          const SizedBox(width: 8),
+          const Text('Fil de discussion', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: kTextMain)),
+          const Spacer(),
+          _ConvBadge(label: 'Client', count: clientCount, color: const Color(0xFF8B5CF6)),
+          const SizedBox(width: 8),
+          _ConvBadge(label: 'Architecte', count: archiCount, color: kAccent),
+        ]),
+      ),
+
+      // ── Message list ────────────────────────────────────────────────────
+      Expanded(child: Container(
+        decoration: BoxDecoration(color: kCardBg, borderRadius: BorderRadius.circular(14),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 6, offset: const Offset(0, 2))]),
+        child: commentaires.isEmpty
+          ? _EmptyState(icon: LucideIcons.messageCircle, message: 'Aucun message pour ce projet')
+          : ListView.builder(
+              controller: _scroll,
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              itemCount: commentaires.length,
+              itemBuilder: (_, i) => _BubbleRow(
+                commentaire: commentaires[i],
+                onReply: (c) => setState(() {
+                  _replyingTo = c;
+                  Future.delayed(const Duration(milliseconds: 50), () => FocusScope.of(context).unfocus());
+                }),
+              ),
+            ),
+      )),
+
+      // ── Reply banner ────────────────────────────────────────────────────
+      if (_replyingTo != null)
+        Container(
+          margin: const EdgeInsets.only(top: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF5F3FF),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: const Color(0xFF8B5CF6).withOpacity(0.3)),
+          ),
+          child: Row(children: [
+            const Icon(LucideIcons.cornerDownRight, size: 13, color: Color(0xFF8B5CF6)),
+            const SizedBox(width: 8),
+            Expanded(child: Text(
+              'Réponse à ${_replyingTo!.auteur} : «${_replyingTo!.contenu.length > 60 ? '${_replyingTo!.contenu.substring(0, 60)}…' : _replyingTo!.contenu}»',
+              style: const TextStyle(fontSize: 11, color: Color(0xFF8B5CF6), fontStyle: FontStyle.italic),
+              overflow: TextOverflow.ellipsis,
+            )),
+            GestureDetector(
+              onTap: () => setState(() => _replyingTo = null),
+              child: const Icon(LucideIcons.x, size: 13, color: Color(0xFF8B5CF6)),
+            ),
+          ]),
+        ),
+
+      // ── Text input ──────────────────────────────────────────────────────
+      const SizedBox(height: 8),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(color: kCardBg, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB))),
+        child: Row(children: [
+          Container(width: 30, height: 30, decoration: BoxDecoration(color: kAccent.withOpacity(0.1), shape: BoxShape.circle), child: const Icon(LucideIcons.user, size: 13, color: kAccent)),
+          const SizedBox(width: 10),
+          Expanded(child: TextField(
+            controller: _ctrl,
+            onSubmitted: (_) => _send(),
+            style: const TextStyle(fontSize: 13, color: kTextMain),
+            decoration: InputDecoration(
+              hintText: _replyingTo != null ? 'Votre réponse...' : 'Répondre au client...',
+              hintStyle: const TextStyle(color: kTextSub),
+              border: InputBorder.none, isDense: true, contentPadding: EdgeInsets.zero,
+            ),
+          )),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: _send,
+            child: Container(
+              width: 36, height: 36,
+              decoration: BoxDecoration(color: kAccent, borderRadius: BorderRadius.circular(8)),
+              child: const Icon(Icons.send_rounded, color: Colors.white, size: 16),
+            ),
+          ),
+        ]),
+      ),
     ]));
   }
 }
 
+class _ConvBadge extends StatelessWidget {
+  final String label; final int count; final Color color;
+  const _ConvBadge({required this.label, required this.count, required this.color});
+  @override
+  Widget build(BuildContext context) => Row(mainAxisSize: MainAxisSize.min, children: [
+    Container(width: 7, height: 7, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+    const SizedBox(width: 5),
+    Text('$label ($count)', style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w600)),
+  ]);
+}
+
 class _BubbleRow extends StatelessWidget {
-  final Commentaire commentaire; const _BubbleRow({required this.commentaire});
+  final Commentaire commentaire;
+  final void Function(Commentaire) onReply;
+  const _BubbleRow({required this.commentaire, required this.onReply});
+
   @override
   Widget build(BuildContext context) {
     final isArchi = commentaire.role == 'architecte';
-    return Padding(padding: const EdgeInsets.only(bottom: 14), child: Column(crossAxisAlignment: isArchi ? CrossAxisAlignment.end : CrossAxisAlignment.start, children: [
-      Row(mainAxisAlignment: isArchi ? MainAxisAlignment.end : MainAxisAlignment.start, children: [Text(commentaire.auteur, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12, color: kTextMain)), const SizedBox(width: 6), Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(4)), child: Text(isArchi ? 'ARCHITECTE' : 'CLIENT', style: const TextStyle(color: kTextSub, fontSize: 9, fontWeight: FontWeight.w700))), const SizedBox(width: 6), Text(commentaire.createdAt.length > 10 ? commentaire.createdAt.substring(0, 10) : commentaire.createdAt, style: const TextStyle(color: kTextSub, fontSize: 10))]),
-      const SizedBox(height: 5),
-      Container(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10), decoration: BoxDecoration(color: isArchi ? kAccent : const Color(0xFFF3F4F6), borderRadius: BorderRadius.only(topLeft: const Radius.circular(14), topRight: const Radius.circular(14), bottomLeft: Radius.circular(isArchi ? 14 : 0), bottomRight: Radius.circular(isArchi ? 0 : 14))), child: Text(commentaire.contenu, style: TextStyle(color: isArchi ? Colors.white : kTextMain, fontSize: 13, height: 1.4))),
-    ]));
+    final isReply = commentaire.contenu.startsWith('↩ En réponse à');
+
+    // Split quoted part from actual reply
+    String? quotePart;
+    String mainContent = commentaire.contenu;
+    if (isArchi && isReply) {
+      final parts = commentaire.contenu.split('\n\n');
+      if (parts.length >= 2) {
+        quotePart = parts.sublist(0, parts.length - 1).join('\n\n');
+        mainContent = parts.last;
+      }
+    }
+
+    final bubbleColor    = isArchi ? kAccent : const Color(0xFF8B5CF6);
+    final bgColor        = isArchi ? kAccent : const Color(0xFFF5F3FF);
+    final textColor      = isArchi ? Colors.white : const Color(0xFF1F2937);
+    final badgeLabel     = isArchi ? 'ARCHITECTE' : 'CLIENT';
+    final badgeColor     = isArchi ? kAccent.withOpacity(0.1) : const Color(0xFF8B5CF6).withOpacity(0.1);
+    final badgeTextColor = isArchi ? kAccent : const Color(0xFF8B5CF6);
+
+    final dateStr = commentaire.createdAt.length >= 10
+        ? commentaire.createdAt.substring(0, 10)
+        : commentaire.createdAt;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(crossAxisAlignment: isArchi ? CrossAxisAlignment.end : CrossAxisAlignment.start, children: [
+        // Author row
+        Row(
+          mainAxisAlignment: isArchi ? MainAxisAlignment.end : MainAxisAlignment.start,
+          children: [
+            if (!isArchi) ...[
+              Container(width: 28, height: 28, decoration: BoxDecoration(color: const Color(0xFF8B5CF6).withOpacity(0.12), shape: BoxShape.circle), child: const Icon(LucideIcons.user, size: 13, color: Color(0xFF8B5CF6))),
+              const SizedBox(width: 8),
+            ],
+            Text(commentaire.auteur, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: kTextMain)),
+            const SizedBox(width: 6),
+            Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: badgeColor, borderRadius: BorderRadius.circular(4)), child: Text(badgeLabel, style: TextStyle(color: badgeTextColor, fontSize: 9, fontWeight: FontWeight.w800))),
+            const SizedBox(width: 6),
+            Text(dateStr, style: const TextStyle(color: kTextSub, fontSize: 10)),
+            if (isArchi) ...[
+              const SizedBox(width: 8),
+              Container(width: 28, height: 28, decoration: BoxDecoration(color: kAccent.withOpacity(0.12), shape: BoxShape.circle), child: const Icon(LucideIcons.hardHat, size: 13, color: kAccent)),
+            ],
+          ],
+        ),
+        const SizedBox(height: 6),
+        // Bubble
+        ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.65),
+          child: Container(
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: BorderRadius.only(
+                topLeft:     const Radius.circular(14),
+                topRight:    const Radius.circular(14),
+                bottomLeft:  Radius.circular(isArchi ? 14 : 0),
+                bottomRight: Radius.circular(isArchi ? 0 : 14),
+              ),
+              boxShadow: [BoxShadow(color: bubbleColor.withOpacity(0.08), blurRadius: 6, offset: const Offset(0, 2))],
+            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              // Quote block (for architect replies)
+              if (quotePart != null)
+                Container(
+                  margin: const EdgeInsets.fromLTRB(10, 10, 10, 0),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.3),
+                    borderRadius: BorderRadius.circular(8),
+                    border: const Border(left: BorderSide(color: Colors.white54, width: 3)),
+                  ),
+                  child: Text(quotePart, style: const TextStyle(fontSize: 11, color: Colors.white70, fontStyle: FontStyle.italic, height: 1.3)),
+                ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+                child: Text(mainContent, style: TextStyle(color: textColor, fontSize: 13, height: 1.4)),
+              ),
+            ]),
+          ),
+        ),
+        // Reply button (only on client messages)
+        if (!isArchi) ...[
+          const SizedBox(height: 4),
+          GestureDetector(
+            onTap: () => onReply(commentaire),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(LucideIcons.cornerDownRight, size: 12, color: kTextSub),
+              const SizedBox(width: 4),
+              const Text('Répondre', style: TextStyle(fontSize: 11, color: kTextSub, fontWeight: FontWeight.w600)),
+            ]),
+          ),
+        ],
+      ]),
+    );
   }
 }
 

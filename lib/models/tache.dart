@@ -8,7 +8,8 @@ class Tache {
   final String? dateDebut;
   final String? dateFin;
   final double  budgetEstime;
-  final String  remarques;   // ← nouveau
+  final String  remarques;
+  final List<String> meshNames;
   final String  phase;       // legacy
   final String  createdAt;
 
@@ -23,6 +24,7 @@ class Tache {
     this.dateFin,
     this.budgetEstime = 0,
     this.remarques    = '',
+    this.meshNames    = const [],
     this.phase        = 'Général',
     this.createdAt    = '',
   });
@@ -38,6 +40,7 @@ class Tache {
     dateFin:      j['date_fin']      as String?,
     budgetEstime: (j['budget_estime'] as num?)?.toDouble() ?? 0,
     remarques:    j['remarques']     as String? ?? '',
+    meshNames:    List<String>.from(j['mesh_names'] ?? []),
     phase:        j['phase']         as String? ?? 'Général',
     createdAt:    j['created_at']    as String? ?? '',
   );
@@ -53,6 +56,7 @@ class Tache {
     'date_fin':      dateFin,
     'budget_estime': budgetEstime,
     'remarques':     remarques,
+    'mesh_names':    meshNames,
     'phase':         phase,
     'created_at':    createdAt,
   };
@@ -70,6 +74,7 @@ class Tache {
     String? titre, String? description, String? statut,
     String? dateDebut, String? dateFin,
     double? budgetEstime, String? remarques,
+    List<String>? meshNames,
     String? phase, String? createdAt,
   }) => Tache(
     id:           id           ?? this.id,
@@ -82,6 +87,7 @@ class Tache {
     dateFin:      dateFin      ?? this.dateFin,
     budgetEstime: budgetEstime ?? this.budgetEstime,
     remarques:    remarques    ?? this.remarques,
+    meshNames:    meshNames    ?? this.meshNames,
     phase:        phase        ?? this.phase,
     createdAt:    createdAt    ?? this.createdAt,
   );
