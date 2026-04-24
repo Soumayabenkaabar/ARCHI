@@ -20,6 +20,9 @@ import '../service/facture_service.dart';
 import '../service/commentaire_service.dart';
 import '../service/project_member_service.dart';
 import '../service/projet_service.dart';
+import '../service/membre_service.dart';
+import '../service/auth_service.dart';
+import '../widgets/sidebar_widget.dart';
 
 
 // ── Helpers globaux ───────────────────────────────────────────────────────────
@@ -200,7 +203,7 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
     final pad = isMobile ? 16.0 : 28.0;
     final p = widget.project;
 
-    return Scaffold(
+    final content = Scaffold(
       backgroundColor: kBg,
       body: NestedScrollView(
         headerSliverBuilder: (context, _) => [
@@ -292,6 +295,26 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
           ],
         ),
       ),
+    );
+
+    if (isMobile) return content;
+
+    return Scaffold(
+      backgroundColor: kBg,
+      body: Row(children: [
+        SidebarWidget(
+          selectedIndex: 1,
+          onSelect: (_) => Navigator.of(context).pop(),
+          notifCount: 0,
+          architecteNom: AuthService.currentUser?.fullName ?? 'Architecte',
+          onLogout: () async {
+            await AuthService.logout();
+            if (!mounted) return;
+            Navigator.pushReplacementNamed(context, '/login');
+          },
+        ),
+        Expanded(child: content),
+      ]),
     );
   }
 
@@ -2358,40 +2381,255 @@ class _AddLivrableDialogState extends State<_AddLivrableDialog> {
 // ══════════════════════════════════════════════════════════════════════════════
 //  ONGLET ÉQUIPE
 // ══════════════════════════════════════════════════════════════════════════════
-class _EquipeTab extends StatefulWidget { final Project project; const _EquipeTab({required this.project}); @override State<_EquipeTab> createState() => _EquipeTabState(); }
+class _EquipeTab extends StatefulWidget {
+  final Project project;
+  const _EquipeTab({required this.project});
+  @override State<_EquipeTab> createState() => _EquipeTabState();
+}
+
 class _EquipeTabState extends State<_EquipeTab> {
-  List<Membre> membres = []; bool loading = true;
+  List<Membre> membres = [];
+  bool loading = true;
+
   @override void initState() { super.initState(); _load(); }
-  Future<void> _load() async { try { final data = await ProjectMemberService.getMembres(widget.project.id); setState(() { membres = data; loading = false; }); } catch (e) { setState(() => loading = false); } }
+
+  Future<void> _load() async {
+    try {
+      // Approche 1 : table de jointure project_members
+      final viaJoin = await ProjectMemberService.getMembres(widget.project.id);
+
+      // Approche 2 : champ projets_assignes sur le membre lui-même
+      final viaTitre = await MembreService.getMembresByProject(widget.project.titre);
+
+      // Fusion sans doublons (priorité à viaJoin pour les données complètes)
+      final ids = <String>{};
+      final merged = <Membre>[];
+      for (final m in [...viaJoin, ...viaTitre]) {
+        if (ids.add(m.id)) merged.add(m);
+      }
+
+      setState(() { membres = merged; loading = false; });
+    } catch (e) { setState(() => loading = false); }
+  }
+
+  Color _avatarColor(String nom) {
+    const colors = [
+      Color(0xFF3B82F6), Color(0xFF8B5CF6), Color(0xFF10B981),
+      Color(0xFFEC4899), Color(0xFFF59E0B), Color(0xFF06B6D4),
+      Color(0xFF6366F1), Color(0xFFEF4444),
+    ];
+    if (nom.isEmpty) return colors[0];
+    return colors[nom.codeUnitAt(0) % colors.length];
+  }
+
+  String _initiales(String nom) {
+    final parts = nom.trim().split(' ');
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) return parts[0].substring(0, 1).toUpperCase();
+    return '${parts[0][0]}${parts[parts.length - 1][0]}'.toUpperCase();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final isMobile = MediaQuery.of(context).size.width < 800; final pad = isMobile ? 16.0 : 28.0;
+    final isMobile = MediaQuery.of(context).size.width < 800;
+    final pad = isMobile ? 16.0 : 28.0;
     if (loading) return const Center(child: CircularProgressIndicator(color: kAccent));
-    return SingleChildScrollView(padding: EdgeInsets.all(pad), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Text('Équipe du projet', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: kTextMain)),
-      const SizedBox(height: 4),
-      Text('Chef de projet : ${widget.project.chef}', style: const TextStyle(color: kTextSub, fontSize: 13)),
-      const SizedBox(height: 20),
-      if (membres.isEmpty) _EmptyState(icon: LucideIcons.users, message: 'Aucun membre assigné à ce projet')
-      else LayoutBuilder(builder: (ctx, constraints) {
-        final cols = constraints.maxWidth > 700 ? 3 : constraints.maxWidth > 450 ? 2 : 1; final rows = <Widget>[];
-        for (int i = 0; i < membres.length; i += cols) { final row = membres.skip(i).take(cols).toList(); rows.add(IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [for (int j = 0; j < row.length; j++) ...[if (j > 0) const SizedBox(width: 14), Expanded(child: _MembreCard(membre: row[j]))], if (row.length < cols) ...[const SizedBox(width: 14), const Expanded(child: SizedBox())]]))); if (i + cols < membres.length) rows.add(const SizedBox(height: 14)); }
-        return Column(children: rows);
-      }),
-    ]));
+
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(pad, pad, pad, pad + 20),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+
+        // ── Header ──────────────────────────────────────────────────────
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('Équipe du projet', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: kTextMain)),
+            const SizedBox(height: 4),
+            Text(
+              membres.isEmpty
+                  ? 'Aucun membre assigné'
+                  : '${membres.length} membre${membres.length > 1 ? "s" : ""} assigné${membres.length > 1 ? "s" : ""}',
+              style: const TextStyle(color: kTextSub, fontSize: 13),
+            ),
+          ])),
+          if (widget.project.chef.isNotEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              decoration: BoxDecoration(
+                color: kAccent.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: kAccent.withOpacity(0.2)),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(LucideIcons.crown, size: 12, color: kAccent),
+                const SizedBox(width: 6),
+                Text(widget.project.chef, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kAccent)),
+              ]),
+            ),
+        ]),
+        const SizedBox(height: 20),
+
+        // ── KPIs ─────────────────────────────────────────────────────────
+        if (membres.isNotEmpty) ...[
+          IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            _EquipeKpi(icon: LucideIcons.users,       label: 'Membres',        value: '${membres.length}',                                              color: kAccent),
+            const SizedBox(width: 10),
+            _EquipeKpi(icon: LucideIcons.checkCircle, label: 'Disponibles',    value: '${membres.where((m) => m.disponible).length}',                   color: const Color(0xFF10B981)),
+            const SizedBox(width: 10),
+            _EquipeKpi(icon: LucideIcons.briefcase,   label: 'Rôles distincts',value: '${membres.map((m) => m.role).where((r) => r.isNotEmpty).toSet().length}', color: const Color(0xFF8B5CF6)),
+          ])),
+          const SizedBox(height: 20),
+        ],
+
+        // ── Grille membres ───────────────────────────────────────────────
+        if (membres.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 50, horizontal: 24),
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: const Color(0xFFE5E7EB))),
+            child: Column(children: [
+              Container(width: 64, height: 64, decoration: BoxDecoration(color: kAccent.withOpacity(0.08), borderRadius: BorderRadius.circular(16)), child: Icon(LucideIcons.users, size: 28, color: kAccent.withOpacity(0.5))),
+              const SizedBox(height: 16),
+              const Text('Aucun membre assigné à ce projet', style: TextStyle(color: kTextMain, fontSize: 14, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 6),
+              const Text('Assignez des membres depuis la gestion des membres', style: TextStyle(color: kTextSub, fontSize: 12)),
+            ]),
+          )
+        else
+          LayoutBuilder(builder: (ctx, cs) {
+            final cols = cs.maxWidth > 700 ? 3 : cs.maxWidth > 450 ? 2 : 1;
+            final rows = <Widget>[];
+            for (int i = 0; i < membres.length; i += cols) {
+              final row = membres.skip(i).take(cols).toList();
+              rows.add(IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                for (int j = 0; j < row.length; j++) ...[
+                  if (j > 0) const SizedBox(width: 14),
+                  Expanded(child: _MembreCard(
+                    membre: row[j],
+                    avatarColor: _avatarColor(row[j].nom),
+                    initiales: _initiales(row[j].nom),
+                    isChef: widget.project.chef.isNotEmpty &&
+                        row[j].nom.toLowerCase().contains(widget.project.chef.toLowerCase()),
+                  )),
+                ],
+                if (row.length < cols) ...[const SizedBox(width: 14), const Expanded(child: SizedBox())],
+              ])));
+              if (i + cols < membres.length) rows.add(const SizedBox(height: 14));
+            }
+            return Column(children: rows);
+          }),
+      ]),
+    );
   }
 }
 
-class _MembreCard extends StatelessWidget {
-  final Membre membre; const _MembreCard({required this.membre});
+// ── KPI Équipe ────────────────────────────────────────────────────────────────
+class _EquipeKpi extends StatelessWidget {
+  final IconData icon;
+  final String label, value;
+  final Color color;
+  const _EquipeKpi({required this.icon, required this.label, required this.value, required this.color});
   @override
-  Widget build(BuildContext context) => Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: kCardBg, borderRadius: BorderRadius.circular(12), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 6, offset: const Offset(0, 2))]), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-    Row(children: [Container(width: 44, height: 44, decoration: BoxDecoration(color: const Color(0xFFEFF6FF), borderRadius: BorderRadius.circular(22)), child: const Icon(LucideIcons.user, color: Color(0xFF3B82F6), size: 22)), const SizedBox(width: 12), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(membre.nom, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: kTextMain), overflow: TextOverflow.ellipsis), const SizedBox(height: 4), Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2), decoration: BoxDecoration(color: const Color(0xFF374151), borderRadius: BorderRadius.circular(20)), child: Text(membre.role, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600)))]))]),
-    const SizedBox(height: 12), const Divider(height: 1, color: Color(0xFFF3F4F6)), const SizedBox(height: 10),
-    Row(children: [const Icon(LucideIcons.mail, size: 13, color: kTextSub), const SizedBox(width: 6), Expanded(child: Text(membre.email, style: const TextStyle(color: kTextSub, fontSize: 12), overflow: TextOverflow.ellipsis))]),
-    const SizedBox(height: 6),
-    Row(children: [const Icon(LucideIcons.phone, size: 13, color: kTextSub), const SizedBox(width: 6), Text(membre.telephone, style: const TextStyle(color: kTextSub, fontSize: 12))]),
-  ]));
+  Widget build(BuildContext context) => Expanded(child: Container(
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB)), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 6, offset: const Offset(0, 2))]),
+    child: Row(children: [
+      Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: Icon(icon, size: 15, color: color)),
+      const SizedBox(width: 10),
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(value, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: color)),
+        Text(label, style: const TextStyle(fontSize: 10, color: kTextSub, fontWeight: FontWeight.w500)),
+      ]),
+    ]),
+  ));
+}
+
+// ── Carte Membre ──────────────────────────────────────────────────────────────
+class _MembreCard extends StatelessWidget {
+  final Membre membre;
+  final Color avatarColor;
+  final String initiales;
+  final bool isChef;
+  const _MembreCard({required this.membre, required this.avatarColor, required this.initiales, this.isChef = false});
+
+  @override
+  Widget build(BuildContext context) {
+    final m = membre;
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: isChef ? kAccent.withOpacity(0.35) : const Color(0xFFE5E7EB)),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Bande colorée
+        Container(height: 5, decoration: BoxDecoration(color: avatarColor, borderRadius: const BorderRadius.vertical(top: Radius.circular(14)))),
+        Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          // Avatar + nom + rôle
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Container(
+              width: 48, height: 48,
+              decoration: BoxDecoration(color: avatarColor, shape: BoxShape.circle, boxShadow: [BoxShadow(color: avatarColor.withOpacity(0.3), blurRadius: 8, offset: const Offset(0, 3))]),
+              child: Center(child: Text(initiales, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16))),
+            ),
+            const SizedBox(width: 12),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Expanded(child: Text(m.nom, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: kTextMain), overflow: TextOverflow.ellipsis)),
+                if (isChef) ...[const SizedBox(width: 4), const Icon(LucideIcons.crown, size: 13, color: kAccent)],
+              ]),
+              const SizedBox(height: 5),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(color: avatarColor.withOpacity(0.1), borderRadius: BorderRadius.circular(6), border: Border.all(color: avatarColor.withOpacity(0.2))),
+                child: Text(m.role.isNotEmpty ? m.role : 'Membre', style: TextStyle(color: avatarColor, fontSize: 10, fontWeight: FontWeight.w700)),
+              ),
+            ])),
+          ]),
+          const SizedBox(height: 14),
+          const Divider(height: 1, color: Color(0xFFF3F4F6)),
+          const SizedBox(height: 12),
+          // Contact
+          if (m.email.isNotEmpty) ...[
+            Row(children: [const Icon(LucideIcons.mail, size: 13, color: kTextSub), const SizedBox(width: 8), Expanded(child: Text(m.email, style: const TextStyle(color: kTextSub, fontSize: 12), overflow: TextOverflow.ellipsis))]),
+            const SizedBox(height: 7),
+          ],
+          if (m.telephone.isNotEmpty) ...[
+            Row(children: [const Icon(LucideIcons.phone, size: 13, color: kTextSub), const SizedBox(width: 8), Text(m.telephone, style: const TextStyle(color: kTextSub, fontSize: 12))]),
+            const SizedBox(height: 7),
+          ],
+          if (m.specialite != null && m.specialite!.isNotEmpty) ...[
+            Row(children: [const Icon(LucideIcons.award, size: 13, color: kTextSub), const SizedBox(width: 8), Expanded(child: Text(m.specialite!, style: const TextStyle(color: kTextSub, fontSize: 12), overflow: TextOverflow.ellipsis))]),
+            const SizedBox(height: 7),
+          ],
+          const SizedBox(height: 4),
+          // Disponibilité + projets
+          Row(children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(color: m.disponible ? const Color(0xFFECFDF5) : const Color(0xFFFEF2F2), borderRadius: BorderRadius.circular(6)),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Container(width: 6, height: 6, decoration: BoxDecoration(color: m.disponible ? const Color(0xFF10B981) : kRed, shape: BoxShape.circle)),
+                const SizedBox(width: 5),
+                Text(m.disponible ? 'Disponible' : 'Indisponible', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: m.disponible ? const Color(0xFF10B981) : kRed)),
+              ]),
+            ),
+            const Spacer(),
+            if (m.projetsAssignes.isNotEmpty)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(6)),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(LucideIcons.briefcase, size: 10, color: kTextSub),
+                  const SizedBox(width: 4),
+                  Text('${m.projetsAssignes.length} projet${m.projetsAssignes.length > 1 ? "s" : ""}', style: const TextStyle(fontSize: 10, color: kTextSub, fontWeight: FontWeight.w600)),
+                ]),
+              ),
+          ]),
+        ])),
+      ]),
+    );
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -3397,8 +3635,9 @@ class _Modele3DTabState extends State<_Modele3DTab> {
         ]))
       else if (!_showForm)
         Container(width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 60, horizontal: 24), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: const Color(0xFFE5E7EB))), child: Column(children: [Container(width: 64, height: 64, decoration: BoxDecoration(color: kAccent.withOpacity(0.08), borderRadius: BorderRadius.circular(16)), child: Icon(LucideIcons.box, size: 28, color: kAccent.withOpacity(0.6))), const SizedBox(height: 16), const Text('Aucun modèle 3D pour ce projet', style: TextStyle(color: kTextMain, fontSize: 14, fontWeight: FontWeight.w600)), const SizedBox(height: 6), const Text('Ajoutez un lien vers votre maquette BIM ou modèle Sketchfab', style: TextStyle(color: kTextSub, fontSize: 12), textAlign: TextAlign.center), const SizedBox(height: 20), OutlinedButton.icon(onPressed: () => setState(() => _showForm = true), icon: const Icon(LucideIcons.link, size: 14, color: kAccent), label: const Text('Ajouter un lien 3D', style: TextStyle(color: kAccent, fontWeight: FontWeight.w600, fontSize: 13)), style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10), side: const BorderSide(color: kAccent), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))))]),
-         ),
-          const SizedBox(height: 20),
+      
+        ),
+        const SizedBox(height: 20),
       Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB))), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('Formats & Plateformes supportés', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: kTextMain)), const SizedBox(height: 12), Wrap(spacing: 8, runSpacing: 8, children: [for (final p in ['Sketchfab', 'Autodesk BIM 360', 'Speckle', 'Trimble Connect', 'Archicad BIMx', 'Autre lien iframe']) Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: const Color(0xFFE5E7EB))), child: Text(p, style: const TextStyle(fontSize: 12, color: kTextSub)))])])),
     ]));
   }

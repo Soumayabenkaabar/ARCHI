@@ -1,8 +1,4 @@
-/// Modèle Membre — table `membres`
-///
-/// Colonnes BDD :
-///   id, user_id, nom, role, specialite, email,
-///   telephone, disponible, projets_assignes, created_at
+
 class Membre {
   final String id; // non-nullable : toujours présent depuis Supabase
   final String? userId;
