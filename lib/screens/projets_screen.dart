@@ -19,6 +19,8 @@ class ProjetsScreen extends StatefulWidget {
 
 class _ProjetsScreenState extends State<ProjetsScreen> {
   String selectedFilter = 'Tous';
+  String _searchQuery = '';
+  String _sortBy = 'statut'; // 'statut' | 'nom' | 'avancement'
   List<Project> projets = [];
   bool isLoading = true;
 
@@ -43,30 +45,165 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
     }
   }
 
+  static const Map<String, int> _statutOrder = {
+    'en_cours': 0,
+    'en_attente': 1,
+    'termine': 2,
+    'annule': 3,
+  };
+
+  static const Map<String, String> _labelToDb = {
+    'En cours': 'en_cours',
+    'Planification': 'en_attente',
+    'Terminé': 'termine',
+    'Annulé': 'annule',
+  };
+
   List<Project> get _filtered {
-    if (selectedFilter == 'Tous') return projets;
-    // Convertir le label affiché vers la valeur BDD
-    final map = {
-      'En cours': 'en_cours',
-      'Planification': 'en_attente',
-      'Terminé': 'termine',
-    };
-    final statutDb = map[selectedFilter];
-    if (statutDb == null) return projets;
-    return projets.where((p) => p.statut == statutDb).toList();
+    var list = projets.where((p) {
+      if (_searchQuery.isNotEmpty) {
+        final q = _searchQuery.toLowerCase();
+        if (!p.titre.toLowerCase().contains(q) &&
+            !p.client.toLowerCase().contains(q) &&
+            !p.localisation.toLowerCase().contains(q)) return false;
+      }
+      if (selectedFilter != 'Tous') {
+        final db = _labelToDb[selectedFilter];
+        if (db != null && p.statut != db) return false;
+      }
+      return true;
+    }).toList();
+
+    switch (_sortBy) {
+      case 'statut':
+        list.sort((a, b) => (_statutOrder[a.statut] ?? 9).compareTo(_statutOrder[b.statut] ?? 9));
+      case 'nom':
+        list.sort((a, b) => a.titre.toLowerCase().compareTo(b.titre.toLowerCase()));
+      case 'avancement':
+        list.sort((a, b) => b.avancement.compareTo(a.avancement));
+    }
+    return list;
+  }
+
+  // Groupement par statut pour la vue "Tous"
+  Map<String, List<Project>> get _grouped {
+    final order = ['en_cours', 'en_attente', 'termine', 'annule'];
+    final map = <String, List<Project>>{};
+    for (final s in order) {
+      final items = _filtered.where((p) => p.statut == s).toList();
+      if (items.isNotEmpty) map[s] = items;
+    }
+    return map;
   }
 
   Color _statusColor(String status) {
     switch (status) {
-      case 'En cours':
-        return const Color(0xFF3B82F6);
-      case 'Planification':
-        return kAccent;
-      case 'Terminé':
-        return const Color(0xFF10B981);
-      default:
-        return const Color(0xFF6B7280);
+      case 'En cours':    return const Color(0xFF3B82F6);
+      case 'Planification': return const Color(0xFFF59E0B);
+      case 'Terminé':     return const Color(0xFF10B981);
+      case 'Annulé':      return const Color(0xFF9CA3AF);
+      default:            return const Color(0xFF6B7280);
     }
+  }
+
+  static const Map<String, String> _dbToLabel = {
+    'en_cours': 'En cours',
+    'en_attente': 'Planification',
+    'termine': 'Terminé',
+    'annule': 'Annulé',
+  };
+
+  Widget _buildGroupedList(BuildContext context) {
+    final groups = _grouped;
+    if (groups.isEmpty) return const SizedBox();
+
+    final groupColors = {
+      'en_cours': const Color(0xFF3B82F6),
+      'en_attente': const Color(0xFFF59E0B),
+      'termine': const Color(0xFF10B981),
+      'annule': const Color(0xFF9CA3AF),
+    };
+    final groupIcons = {
+      'en_cours': LucideIcons.activity,
+      'en_attente': LucideIcons.clock,
+      'termine': LucideIcons.checkCircle,
+      'annule': LucideIcons.xCircle,
+    };
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: groups.entries.map((entry) {
+        final statut = entry.key;
+        final items = entry.value;
+        final color = groupColors[statut] ?? kTextSub;
+        final icon = groupIcons[statut] ?? LucideIcons.folder;
+        final label = _dbToLabel[statut] ?? statut;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Section header
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: color.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(icon, size: 14, color: color),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: color,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: color.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      '${items.length}',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: color),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(child: Divider(color: color.withOpacity(0.2), thickness: 1)),
+                ],
+              ),
+            ),
+            // Grid for this group
+            LayoutBuilder(builder: (ctx, c) {
+              final cols = c.maxWidth > 900 ? 3 : c.maxWidth > 580 ? 2 : 1;
+              if (cols == 1) {
+                return Column(
+                  children: items.map((p) => Padding(
+                    padding: const EdgeInsets.only(bottom: 14),
+                    child: GestureDetector(
+                      onTap: () => Navigator.push(context, MaterialPageRoute(
+                        builder: (_) => ProjetDetailScreen(project: p, projectIndex: 0),
+                      )),
+                      child: ProjectFullCard(project: p),
+                    ),
+                  )).toList(),
+                );
+              }
+              return _ProjetGrid(projects: items, columns: cols, onRefresh: loadProjets);
+            }),
+            const SizedBox(height: 24),
+          ],
+        );
+      }).toList(),
+    );
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -646,43 +783,80 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
             const SizedBox(height: 20),
 
             // ── Stats ─────────────────────────────────────────────────────
-            IntrinsicHeight(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Expanded(
-                    child: _MiniStat(
-                      label: 'Total',
-                      value: '${projets.length}',
-                      icon: LucideIcons.layoutGrid,
-                      color: kAccent,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _MiniStat(
-                      label: 'En cours',
-                      value:
-                          '${projets.where((p) => p.statut == "en_cours").length}',
-                      icon: LucideIcons.activity,
-                      color: const Color(0xFF3B82F6),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _MiniStat(
-                      label: 'Terminés',
-                      value:
-                          '${projets.where((p) => p.statut == "termine").length}',
-                      icon: LucideIcons.checkCircle,
-                      color: const Color(0xFF10B981),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            LayoutBuilder(builder: (ctx, c) {
+              final stats = [
+                _StatData('Total', '${projets.length}', LucideIcons.layoutGrid, kAccent),
+                _StatData('En cours', '${projets.where((p) => p.statut == "en_cours").length}', LucideIcons.activity, const Color(0xFF3B82F6)),
+                _StatData('Planification', '${projets.where((p) => p.statut == "en_attente").length}', LucideIcons.clock, const Color(0xFFF59E0B)),
+                _StatData('Terminés', '${projets.where((p) => p.statut == "termine").length}', LucideIcons.checkCircle, const Color(0xFF10B981)),
+              ];
+              return Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: stats.map((s) => SizedBox(
+                  width: c.maxWidth < 500
+                      ? (c.maxWidth - 10) / 2
+                      : (c.maxWidth - 30) / 4,
+                  child: _MiniStat(label: s.label, value: s.value, icon: s.icon, color: s.color),
+                )).toList(),
+              );
+            }),
 
             const SizedBox(height: 20),
+
+            // ── Recherche + Tri ───────────────────────────────────────────
+            Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: kCardBg,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFFE5E7EB)),
+                    ),
+                    child: TextField(
+                      onChanged: (v) => setState(() => _searchQuery = v),
+                      style: const TextStyle(fontSize: 13, color: kTextMain),
+                      decoration: const InputDecoration(
+                        hintText: 'Rechercher un projet...',
+                        hintStyle: TextStyle(color: kTextSub, fontSize: 13),
+                        prefixIcon: Icon(LucideIcons.search, size: 15, color: kTextSub),
+                        border: InputBorder.none,
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(vertical: 11),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: kCardBg,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFFE5E7EB)),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _sortBy,
+                      style: const TextStyle(fontSize: 12, color: kTextMain),
+                      icon: const Icon(LucideIcons.chevronsUpDown, size: 13, color: kTextSub),
+                      dropdownColor: Colors.white,
+                      items: const [
+                        DropdownMenuItem(value: 'statut', child: Text('Trier : Statut')),
+                        DropdownMenuItem(value: 'nom', child: Text('Trier : Nom')),
+                        DropdownMenuItem(value: 'avancement', child: Text('Trier : Avancement')),
+                      ],
+                      onChanged: (v) => setState(() => _sortBy = v ?? 'statut'),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 14),
 
             // ── Filtres ───────────────────────────────────────────────────
             SingleChildScrollView(
@@ -693,6 +867,7 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
                   'En cours',
                   'Planification',
                   'Terminé',
+                  'Annulé',
                 ].map((l) => _buildFilter(l)).toList(),
               ),
             ),
@@ -706,29 +881,20 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
                   padding: const EdgeInsets.symmetric(vertical: 60),
                   child: Column(
                     children: [
-                      Icon(
-                        LucideIcons.folderOpen,
-                        size: 48,
-                        color: kTextSub.withOpacity(0.4),
-                      ),
+                      Icon(LucideIcons.folderOpen, size: 48, color: kTextSub.withOpacity(0.4)),
                       const SizedBox(height: 14),
                       Text(
-                        selectedFilter == 'Tous'
-                            ? 'Aucun projet trouvé'
-                            : 'Aucun projet "$selectedFilter"',
-                        style: const TextStyle(
-                          color: kTextSub,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w500,
-                        ),
+                        _searchQuery.isNotEmpty
+                            ? 'Aucun résultat pour "$_searchQuery"'
+                            : selectedFilter == 'Tous'
+                                ? 'Aucun projet trouvé'
+                                : 'Aucun projet "$selectedFilter"',
+                        style: const TextStyle(color: kTextSub, fontSize: 15, fontWeight: FontWeight.w500),
                       ),
                       const SizedBox(height: 8),
                       Text(
                         'Appuyez sur "Nouveau projet" pour commencer',
-                        style: TextStyle(
-                          color: kTextSub.withOpacity(0.6),
-                          fontSize: 13,
-                        ),
+                        style: TextStyle(color: kTextSub.withOpacity(0.6), fontSize: 13),
                       ),
                     ],
                   ),
@@ -738,39 +904,21 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
               LayoutBuilder(
                 builder: (context, constraints) {
                   if (constraints.maxWidth > 900) {
-                    return _ProjetGrid(
-                      projects: filtered,
-                      columns: 3,
-                      onRefresh: loadProjets,
-                    );
+                    return _ProjetGrid(projects: filtered, columns: 3, onRefresh: loadProjets);
                   }
                   if (constraints.maxWidth > 580) {
-                    return _ProjetGrid(
-                      projects: filtered,
-                      columns: 2,
-                      onRefresh: loadProjets,
-                    );
+                    return _ProjetGrid(projects: filtered, columns: 2, onRefresh: loadProjets);
                   }
                   return Column(
-                    children: filtered
-                        .map(
-                          (p) => Padding(
-                            padding: const EdgeInsets.only(bottom: 16),
-                            child: GestureDetector(
-                              onTap: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => ProjetDetailScreen(
-                                    project: p,
-                                    projectIndex: 0,
-                                  ),
-                                ),
-                              ),
-                              child: ProjectFullCard(project: p),
-                            ),
-                          ),
-                        )
-                        .toList(),
+                    children: filtered.map((p) => Padding(
+                      padding: const EdgeInsets.only(bottom: 16),
+                      child: GestureDetector(
+                        onTap: () => Navigator.push(context, MaterialPageRoute(
+                          builder: (_) => ProjetDetailScreen(project: p, projectIndex: 0),
+                        )),
+                        child: ProjectFullCard(project: p),
+                      ),
+                    )).toList(),
                   );
                 },
               ),
@@ -1066,6 +1214,13 @@ class _ProjetField extends StatelessWidget {
       ),
     ],
   );
+}
+
+class _StatData {
+  final String label, value;
+  final IconData icon;
+  final Color color;
+  const _StatData(this.label, this.value, this.icon, this.color);
 }
 
 void _showSnack(BuildContext context, String msg, Color color) {

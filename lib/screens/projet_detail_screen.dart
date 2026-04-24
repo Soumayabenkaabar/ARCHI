@@ -169,13 +169,102 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
   late TabController _tabController;
   static const int _tabCount = 7;
   int _commentCount = 0;
+  late Project _project;
+  bool _updatingStatut = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _project = widget.project;
+    _tabController = TabController(length: _tabCount, vsync: this);
+    _loadCommentCount();
+  }
 
   Color get _statusColor {
-    switch (widget.project.statut) {
+    switch (_project.statut) {
       case 'en_cours': return kAccent;
       case 'termine':  return const Color(0xFF10B981);
       case 'annule':   return kRed;
       default:         return const Color(0xFF9CA3AF);
+    }
+  }
+
+  Future<void> _terminerProjet() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(children: [
+          Icon(LucideIcons.checkCircle, color: Color(0xFF10B981), size: 20),
+          SizedBox(width: 10),
+          Text('Terminer le projet ?'),
+        ]),
+        content: Text('Le projet "${_project.titre}" sera marqué comme terminé.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Annuler')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF10B981), elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Terminer', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _updatingStatut = true);
+    try {
+      await ProjetService.updateStatutProjet(_project.id, 'termine');
+      setState(() { _project = Project(id: _project.id, clientId: _project.clientId, titre: _project.titre, description: _project.description, statut: 'termine', avancement: 100, dateDebut: _project.dateDebut, dateFin: _project.dateFin, budgetTotal: _project.budgetTotal, budgetDepense: _project.budgetDepense, client: _project.client, localisation: _project.localisation, chef: _project.chef, taches: _project.taches, membres: _project.membres, docs: _project.docs, portailClient: _project.portailClient); });
+      _snack(context, '✓ Projet marqué comme terminé', const Color(0xFF10B981));
+    } catch (e) {
+      _snack(context, 'Erreur : $e', kRed);
+    } finally {
+      if (mounted) setState(() => _updatingStatut = false);
+    }
+  }
+
+  Future<void> _annulerProjet() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(children: [
+          Icon(LucideIcons.xCircle, color: kRed, size: 20),
+          SizedBox(width: 10),
+          Text('Annuler le projet ?'),
+        ]),
+        content: Text('Le projet "${_project.titre}" sera marqué comme annulé. Cette action est réversible.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Retour')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: kRed, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Annuler le projet', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _updatingStatut = true);
+    try {
+      await ProjetService.updateStatutProjet(_project.id, 'annule');
+      setState(() { _project = Project(id: _project.id, clientId: _project.clientId, titre: _project.titre, description: _project.description, statut: 'annule', avancement: _project.avancement, dateDebut: _project.dateDebut, dateFin: _project.dateFin, budgetTotal: _project.budgetTotal, budgetDepense: _project.budgetDepense, client: _project.client, localisation: _project.localisation, chef: _project.chef, taches: _project.taches, membres: _project.membres, docs: _project.docs, portailClient: _project.portailClient); });
+      _snack(context, 'Projet annulé', kRed);
+    } catch (e) {
+      _snack(context, 'Erreur : $e', kRed);
+    } finally {
+      if (mounted) setState(() => _updatingStatut = false);
+    }
+  }
+
+  Future<void> _togglePortailClient(bool value) async {
+    setState(() { _project = Project(id: _project.id, clientId: _project.clientId, titre: _project.titre, description: _project.description, statut: _project.statut, avancement: _project.avancement, dateDebut: _project.dateDebut, dateFin: _project.dateFin, budgetTotal: _project.budgetTotal, budgetDepense: _project.budgetDepense, client: _project.client, localisation: _project.localisation, chef: _project.chef, taches: _project.taches, membres: _project.membres, docs: _project.docs, portailClient: value); });
+    try {
+      await ProjetService.updatePortailClient(_project.id, value);
+      _snack(context, value ? '✓ Portail client activé' : 'Portail client désactivé', value ? const Color(0xFF10B981) : kTextSub);
+    } catch (e) {
+      setState(() { _project = Project(id: _project.id, clientId: _project.clientId, titre: _project.titre, description: _project.description, statut: _project.statut, avancement: _project.avancement, dateDebut: _project.dateDebut, dateFin: _project.dateFin, budgetTotal: _project.budgetTotal, budgetDepense: _project.budgetDepense, client: _project.client, localisation: _project.localisation, chef: _project.chef, taches: _project.taches, membres: _project.membres, docs: _project.docs, portailClient: !value); });
+      _snack(context, 'Erreur : $e', kRed);
     }
   }
 
@@ -186,19 +275,13 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
     return '${buf.toString().split('').reversed.join()} DT';
   }
 
-  @override
-  void initState() {
-    super.initState();
-    _tabController = TabController(length: _tabCount, vsync: this);
-    _loadCommentCount();
-  }
-
   Future<void> _loadCommentCount() async {
     try {
       final comments = await CommentaireService.getCommentaires(widget.project.id);
       if (mounted) setState(() => _commentCount = comments.length);
     } catch (_) {}
   }
+
   @override
   void dispose() { _tabController.dispose(); super.dispose(); }
 
@@ -330,19 +413,29 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
       _StatusBadge(label: p.status, color: _statusColor),
     ])),
     Material(color: Colors.transparent, child: Row(children: [
-      _AccessToggle(),
+      _AccessToggle(
+        value: _project.portailClient,
+        onChanged: _updatingStatut ? null : _togglePortailClient,
+      ),
       const SizedBox(width: 10),
-      OutlinedButton(
-        onPressed: () {},
-        style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFFD1D5DB)), padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
-        child: const Text('Terminer', style: TextStyle(color: kTextMain, fontSize: 12, fontWeight: FontWeight.w600)),
-      ),
-      const SizedBox(width: 8),
-      OutlinedButton(
-        onPressed: () {},
-        style: OutlinedButton.styleFrom(side: const BorderSide(color: kRed), padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
-        child: const Text('Annuler', style: TextStyle(color: kRed, fontSize: 12)),
-      ),
+      if (_project.statut != 'termine') ...[
+        _updatingStatut
+          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF10B981)))
+          : OutlinedButton.icon(
+              onPressed: _terminerProjet,
+              icon: const Icon(LucideIcons.checkCircle, size: 13, color: Color(0xFF10B981)),
+              style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFF10B981)), padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+              label: const Text('Terminer', style: TextStyle(color: Color(0xFF10B981), fontSize: 12, fontWeight: FontWeight.w600)),
+            ),
+        const SizedBox(width: 8),
+      ],
+      if (_project.statut != 'annule')
+        OutlinedButton.icon(
+          onPressed: _updatingStatut ? null : _annulerProjet,
+          icon: const Icon(LucideIcons.xCircle, size: 13, color: kRed),
+          style: OutlinedButton.styleFrom(side: const BorderSide(color: kRed), padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+          label: const Text('Annuler', style: TextStyle(color: kRed, fontSize: 12)),
+        ),
     ])),
   ]);
 
@@ -353,7 +446,19 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
       _StatusBadge(label: p.status, color: _statusColor),
     ])),
     const SizedBox(width: 8),
-    _AccessToggle(),
+    _AccessToggle(
+      value: _project.portailClient,
+      onChanged: _updatingStatut ? null : _togglePortailClient,
+    ),
+    PopupMenuButton<String>(
+      icon: const Icon(LucideIcons.moreVertical, size: 18, color: kTextSub),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      onSelected: (v) { if (v == 'terminer') _terminerProjet(); else if (v == 'annuler') _annulerProjet(); },
+      itemBuilder: (_) => [
+        if (_project.statut != 'termine') const PopupMenuItem(value: 'terminer', child: Row(children: [Icon(LucideIcons.checkCircle, size: 14, color: Color(0xFF10B981)), SizedBox(width: 8), Text('Terminer', style: TextStyle(color: Color(0xFF10B981)))])),
+        if (_project.statut != 'annule')  const PopupMenuItem(value: 'annuler',  child: Row(children: [Icon(LucideIcons.xCircle,    size: 14, color: kRed),               SizedBox(width: 8), Text('Annuler',  style: TextStyle(color: kRed))])),
+      ],
+    ),
   ]);
 
   Widget _buildCompactInfoBar(Project p) => SingleChildScrollView(
@@ -4391,10 +4496,26 @@ class _StatusBadge extends StatelessWidget {
   const _StatusBadge({required this.label, required this.color});
   @override Widget build(BuildContext context) => Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(20)), child: Text(label, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)));
 }
-class _AccessToggle extends StatefulWidget { @override State<_AccessToggle> createState() => _AccessToggleState(); }
-class _AccessToggleState extends State<_AccessToggle> {
-  bool _value = true;
-  @override Widget build(BuildContext context) => Material(color: Colors.transparent, child: Row(mainAxisSize: MainAxisSize.min, children: [Transform.scale(scale: 0.85, child: Switch(value: _value, onChanged: (v) => setState(() => _value = v), activeColor: kAccent)), const Text('Portail client', style: TextStyle(color: kTextSub, fontSize: 12))]));
+class _AccessToggle extends StatelessWidget {
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+  const _AccessToggle({required this.value, this.onChanged});
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: Colors.transparent,
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      Transform.scale(scale: 0.85, child: Switch(
+        value: value,
+        onChanged: onChanged,
+        activeColor: kAccent,
+      )),
+      Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+        const Text('Portail client', style: TextStyle(color: kTextSub, fontSize: 12, fontWeight: FontWeight.w600)),
+        Text(value ? 'Activé' : 'Désactivé', style: TextStyle(color: value ? const Color(0xFF10B981) : kTextSub, fontSize: 10)),
+      ]),
+    ]),
+  );
 }
 class _KpiCard extends StatelessWidget {
   final String label, value; final Color color; final IconData icon;

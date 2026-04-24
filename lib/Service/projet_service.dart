@@ -33,6 +33,16 @@ class ProjetService {
     await _db.from('projets').update({'budget_depense': total}).eq('id', projetId);
   }
 
+  // 🔄 UPDATE statut uniquement
+  static Future<void> updateStatutProjet(String id, String statut) async {
+    await _db.from('projets').update({'statut': statut}).eq('id', id);
+  }
+
+  // 🔄 UPDATE portail_client
+  static Future<void> updatePortailClient(String id, bool value) async {
+    await _db.from('projets').update({'portail_client': value}).eq('id', id);
+  }
+
   // 🗑️ DELETE
   static Future<void> deleteProjet(String id) async {
     await _db.from('projets').delete().eq('id', id);

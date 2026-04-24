@@ -15,6 +15,7 @@ class Project {
   final int taches;
   final List<String> membres;
   final List<String> docs;
+  final bool portailClient;
 
   Project({
     required this.id,
@@ -33,6 +34,7 @@ class Project {
     this.taches = 0,
     this.membres = const [],
     this.docs = const [],
+    this.portailClient = false,
   });
 
   // ── Aliases UI ────────────────────────────────────────────────────────────
@@ -74,6 +76,7 @@ class Project {
     taches: (j['taches'] as num?)?.toInt() ?? 0,
     membres: j['membres'] != null ? List<String>.from(j['membres']) : [],
     docs: j['docs'] != null ? List<String>.from(j['docs']) : [],
+    portailClient: j['portail_client'] as bool? ?? false,
   );
 
   Map<String, dynamic> toJson() => {
@@ -90,6 +93,7 @@ class Project {
     'localisation': localisation,
     'chef': chef,
     'taches': taches,
+    'portail_client': portailClient,
   };
 }
 
