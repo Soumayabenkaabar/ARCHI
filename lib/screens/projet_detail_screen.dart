@@ -268,6 +268,164 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
     }
   }
 
+  DateTime? _parseDate(String? s) {
+    if (s == null || s.isEmpty) return null;
+    try { return DateTime.parse(s); } catch (_) { return null; }
+  }
+
+  String _fmtDate(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  String _displayDate(DateTime? d) =>
+      d == null ? '— Choisir une date' : '${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}/${d.year}';
+
+  Future<void> _editInfoProjet() async {
+    final clientCtrl = TextEditingController(text: _project.client);
+    final locCtrl    = TextEditingController(text: _project.localisation);
+    final chefCtrl   = TextEditingController(text: _project.chef);
+    final budgetCtrl = TextEditingController(text: _project.budgetTotal.toStringAsFixed(0));
+
+    DateTime? dateDebut = _parseDate(_project.dateDebut);
+    DateTime? dateFin   = _parseDate(_project.dateFin);
+    String? dateError;
+
+    InputDecoration _dec(String label, IconData icon) => InputDecoration(
+      labelText: label,
+      prefixIcon: Icon(icon, size: 16, color: kTextSub),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      isDense: true,
+    );
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) {
+          Future<void> pickDebut() async {
+            final picked = await showDatePicker(
+              context: ctx,
+              initialDate: dateDebut ?? DateTime.now(),
+              firstDate: DateTime(2000),
+              lastDate: DateTime(2100),
+              helpText: 'Date de début',
+            );
+            if (picked == null) return;
+            setDlg(() {
+              dateDebut = picked;
+              if (dateFin != null && picked.isAfter(dateFin!)) {
+                dateError = 'La date de début doit être avant la date de fin';
+              } else {
+                dateError = null;
+              }
+            });
+          }
+
+          Future<void> pickFin() async {
+            final picked = await showDatePicker(
+              context: ctx,
+              initialDate: dateFin ?? (dateDebut ?? DateTime.now()),
+              firstDate: dateDebut ?? DateTime(2000),
+              lastDate: DateTime(2100),
+              helpText: 'Date de fin',
+            );
+            if (picked == null) return;
+            setDlg(() {
+              dateFin = picked;
+              dateError = null;
+            });
+          }
+
+          Widget dateTile(String label, DateTime? val, VoidCallback onTap) => InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                border: Border.all(color: const Color(0xFFD1D5DB)),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(children: [
+                Icon(LucideIcons.calendar, size: 16, color: kTextSub),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                    Text(label, style: const TextStyle(fontSize: 11, color: kTextSub)),
+                    const SizedBox(height: 2),
+                    Text(_displayDate(val), style: TextStyle(fontSize: 13, color: val == null ? kTextSub : kTextMain, fontWeight: FontWeight.w500)),
+                  ]),
+                ),
+                const Icon(LucideIcons.chevronDown, size: 14, color: kTextSub),
+              ]),
+            ),
+          );
+
+          return AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: const Row(children: [
+              Icon(LucideIcons.pencil, size: 18, color: kAccent),
+              SizedBox(width: 8),
+              Text('Modifier les informations', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            ]),
+            content: SingleChildScrollView(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                TextField(controller: clientCtrl, decoration: _dec('Client', LucideIcons.briefcase)),
+                const SizedBox(height: 12),
+                TextField(controller: locCtrl,    decoration: _dec('Localisation', LucideIcons.mapPin)),
+                const SizedBox(height: 12),
+                TextField(controller: chefCtrl,   decoration: _dec('Chef de projet', LucideIcons.user)),
+                const SizedBox(height: 12),
+                dateTile('Date de début', dateDebut, pickDebut),
+                const SizedBox(height: 12),
+                dateTile('Date de fin', dateFin, pickFin),
+                if (dateError != null) ...[
+                  const SizedBox(height: 6),
+                  Row(children: [
+                    const Icon(LucideIcons.alertCircle, size: 13, color: kRed),
+                    const SizedBox(width: 4),
+                    Text(dateError!, style: const TextStyle(fontSize: 11, color: kRed)),
+                  ]),
+                ],
+                const SizedBox(height: 12),
+                TextField(controller: budgetCtrl, decoration: _dec('Budget total (DT)', LucideIcons.dollarSign), keyboardType: TextInputType.number),
+              ]),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Annuler')),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: kAccent, elevation: 0),
+                onPressed: dateError != null ? null : () => Navigator.pop(ctx, true),
+                child: const Text('Enregistrer', style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    if (ok != true || !mounted) return;
+
+    final updated = Project(
+      id: _project.id, clientId: _project.clientId, titre: _project.titre,
+      description: _project.description, statut: _project.statut, avancement: _project.avancement,
+      dateDebut: dateDebut == null ? null : _fmtDate(dateDebut!),
+      dateFin:   dateFin   == null ? null : _fmtDate(dateFin!),
+      budgetTotal:  double.tryParse(budgetCtrl.text.replaceAll(' ', '').replaceAll(',', '.')) ?? _project.budgetTotal,
+      budgetDepense: _project.budgetDepense,
+      client:       clientCtrl.text.trim(),
+      localisation: locCtrl.text.trim(),
+      chef:         chefCtrl.text.trim(),
+      taches: _project.taches, membres: _project.membres, docs: _project.docs, portailClient: _project.portailClient,
+    );
+
+    try {
+      await ProjetService.updateProjet(updated);
+      setState(() => _project = updated);
+      _snack(context, '✓ Informations mises à jour', const Color(0xFF10B981));
+    } catch (e) {
+      _snack(context, 'Erreur : $e', kRed);
+    }
+  }
+
   String _fmt(double v) {
     if (v == 0) return '0 DT';
     final s = v.toInt().toString(); final buf = StringBuffer(); int c = 0;
@@ -473,6 +631,11 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
       _CompactChip(icon: LucideIcons.calendar,   text: '${p.dateDebut ?? "—"} → ${p.dateFin ?? "—"}'),
       const SizedBox(width: 8),
       _CompactChip(icon: LucideIcons.dollarSign, text: '${_fmt(p.budgetDepense)} / ${_fmt(p.budgetTotal)}'),
+      const SizedBox(width: 6),
+      GestureDetector(
+        onTap: _editInfoProjet,
+        child: const Icon(LucideIcons.pencil, size: 13, color: kTextSub),
+      ),
     ]),
   );
 }
