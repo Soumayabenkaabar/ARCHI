@@ -28,6 +28,8 @@ import '../service/model3d_service.dart';
 import '../models/model3d.dart';
 import '../utils/glb_parser.dart';
 import '../widgets/sidebar_widget.dart';
+import '../widgets/map_location_picker.dart';
+import 'package:latlong2/latlong.dart';
 
 
 // ── Helpers globaux ───────────────────────────────────────────────────────────
@@ -288,6 +290,9 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
     DateTime? dateDebut = _parseDate(_project.dateDebut);
     DateTime? dateFin   = _parseDate(_project.dateFin);
     String? dateError;
+    LatLng? pickedPosition = _project.hasPosition
+        ? LatLng(_project.latitude!, _project.longitude!)
+        : null;
 
     InputDecoration _dec(String label, IconData icon) => InputDecoration(
       labelText: label,
@@ -370,7 +375,44 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
               child: Column(mainAxisSize: MainAxisSize.min, children: [
                 TextField(controller: clientCtrl, decoration: _dec('Client', LucideIcons.briefcase)),
                 const SizedBox(height: 12),
-                TextField(controller: locCtrl,    decoration: _dec('Localisation', LucideIcons.mapPin)),
+                TextField(controller: locCtrl, decoration: _dec('Localisation (nom)', LucideIcons.mapPin)),
+                const SizedBox(height: 6),
+                // Sélecteur de position sur carte
+                InkWell(
+                  onTap: () async {
+                    final pos = await showMapLocationPicker(ctx, initial: pickedPosition);
+                    if (pos != null) setDlg(() => pickedPosition = pos);
+                  },
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                    decoration: BoxDecoration(
+                      color: pickedPosition != null ? const Color(0xFF10B981).withOpacity(0.07) : kAccent.withOpacity(0.07),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: pickedPosition != null ? const Color(0xFF10B981).withOpacity(0.3) : kAccent.withOpacity(0.25)),
+                    ),
+                    child: Row(children: [
+                      Icon(pickedPosition != null ? LucideIcons.checkCircle : LucideIcons.mapPin,
+                          size: 13, color: pickedPosition != null ? const Color(0xFF10B981) : kAccent),
+                      const SizedBox(width: 7),
+                      Expanded(child: Text(
+                        pickedPosition != null
+                            ? '${pickedPosition!.latitude.toStringAsFixed(5)}, ${pickedPosition!.longitude.toStringAsFixed(5)}'
+                            : 'Épingler sur la carte',
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
+                            color: pickedPosition != null ? const Color(0xFF10B981) : kAccent),
+                        overflow: TextOverflow.ellipsis,
+                      )),
+                      if (pickedPosition != null) ...[
+                        const SizedBox(width: 4),
+                        GestureDetector(
+                          onTap: () => setDlg(() => pickedPosition = null),
+                          child: const Icon(Icons.close_rounded, size: 14, color: Color(0xFF10B981)),
+                        ),
+                      ],
+                    ]),
+                  ),
+                ),
                 const SizedBox(height: 12),
                 TextField(controller: chefCtrl,   decoration: _dec('Chef de projet', LucideIcons.user)),
                 const SizedBox(height: 12),
@@ -415,6 +457,8 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
       localisation: locCtrl.text.trim(),
       chef:         chefCtrl.text.trim(),
       taches: _project.taches, membres: _project.membres, docs: _project.docs, portailClient: _project.portailClient,
+      latitude:  pickedPosition?.latitude,
+      longitude: pickedPosition?.longitude,
     );
 
     try {

@@ -5,7 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'constants/colors.dart';
 import 'models/nav_item.dart';
-import 'models/notification.dart';
+import 'service/notification_service.dart';
 import 'screens/analytics_screen.dart';
 import 'screens/carte_screen.dart';
 import 'screens/clients_screen.dart';
@@ -69,8 +69,18 @@ class _AppShell extends StatefulWidget {
 
 class _AppShellState extends State<_AppShell> {
   int _selectedIndex = 0;
+  int _notifCount    = 0;
 
-  int get _notifCount => sampleNotifications.where((n) => !n.lue).length;
+  @override
+  void initState() {
+    super.initState();
+    _refreshNotifCount();
+  }
+
+  Future<void> _refreshNotifCount() async {
+    final count = await NotificationService.getUnreadCount();
+    if (mounted) setState(() => _notifCount = count);
+  }
 
   Widget _buildPage(int index) {
     switch (index) {
@@ -80,7 +90,7 @@ class _AppShellState extends State<_AppShell> {
       case 3:  return const EquipeScreen();
       case 4:  return const AnalyticsScreen();
       case 5:  return const CarteScreen();
-      case 6:  return NotificationsScreen(onNotifChanged: () => setState(() {}));
+      case 6:  return NotificationsScreen(onNotifChanged: _refreshNotifCount);
       case 7:  return const ParametresScreen();
       default: return _PlaceholderScreen(label: navItems[index].label);
     }

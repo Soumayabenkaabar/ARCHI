@@ -1,3 +1,5 @@
+// Supabase : ALTER TABLE projets ADD COLUMN latitude FLOAT8, ADD COLUMN longitude FLOAT8;
+
 class Project {
   final String id;
   final String clientId;
@@ -16,6 +18,8 @@ class Project {
   final List<String> membres;
   final List<String> docs;
   final bool portailClient;
+  final double? latitude;
+  final double? longitude;
 
   Project({
     required this.id,
@@ -35,7 +39,11 @@ class Project {
     this.membres = const [],
     this.docs = const [],
     this.portailClient = false,
+    this.latitude,
+    this.longitude,
   });
+
+  bool get hasPosition => latitude != null && longitude != null;
 
   // ── Aliases UI ────────────────────────────────────────────────────────────
   String get title => titre;
@@ -46,92 +54,80 @@ class Project {
 
   static String _statutLabel(String s) {
     switch (s) {
-      case 'en_cours':
-        return 'En cours';
-      case 'en_attente':
-        return 'Planification';
-      case 'termine':
-        return 'Terminé';
-      case 'annule':
-        return 'Annulé';
-      default:
-        return s;
+      case 'en_cours':  return 'En cours';
+      case 'en_attente': return 'Planification';
+      case 'termine':   return 'Terminé';
+      case 'annule':    return 'Annulé';
+      default:          return s;
     }
   }
 
   factory Project.fromJson(Map<String, dynamic> j) => Project(
-    id: j['id']?.toString() ?? '',
-    clientId: j['client_id']?.toString() ?? '',
-    titre: j['titre'] ?? '',
-    description: j['description'] ?? '',
-    statut: j['statut'] ?? 'en_cours',
-    avancement: (j['avancement'] as num?)?.toInt() ?? 0,
-    dateDebut: j['date_debut']?.toString(),
-    dateFin: j['date_fin']?.toString(),
-    budgetTotal: (j['budget_total'] as num?)?.toDouble() ?? 0,
-    budgetDepense: (j['budget_depense'] as num?)?.toDouble() ?? 0,
-    client: j['client'] ?? '',
+    id:           j['id']?.toString() ?? '',
+    clientId:     j['client_id']?.toString() ?? '',
+    titre:        j['titre'] ?? '',
+    description:  j['description'] ?? '',
+    statut:       j['statut'] ?? 'en_cours',
+    avancement:   (j['avancement'] as num?)?.toInt() ?? 0,
+    dateDebut:    j['date_debut']?.toString(),
+    dateFin:      j['date_fin']?.toString(),
+    budgetTotal:  (j['budget_total']   as num?)?.toDouble() ?? 0,
+    budgetDepense:(j['budget_depense'] as num?)?.toDouble() ?? 0,
+    client:       j['client']       ?? '',
     localisation: j['localisation'] ?? '',
-    chef: j['chef'] ?? '',
-    taches: (j['taches'] as num?)?.toInt() ?? 0,
-    membres: j['membres'] != null ? List<String>.from(j['membres']) : [],
-    docs: j['docs'] != null ? List<String>.from(j['docs']) : [],
+    chef:         j['chef']         ?? '',
+    taches:       (j['taches'] as num?)?.toInt() ?? 0,
+    membres:      j['membres'] != null ? List<String>.from(j['membres']) : [],
+    docs:         j['docs']    != null ? List<String>.from(j['docs'])    : [],
     portailClient: j['portail_client'] as bool? ?? false,
+    latitude:     (j['latitude']  as num?)?.toDouble(),
+    longitude:    (j['longitude'] as num?)?.toDouble(),
   );
 
-  Map<String, dynamic> toJson() => {
-    'client_id': clientId,
-    'titre': titre,
-    'description': description,
-    'statut': statut,
-    'avancement': avancement,
-    'date_debut': dateDebut,
-    'date_fin': dateFin,
-    'budget_total': budgetTotal,
-    'budget_depense': budgetDepense,
-    'client': client,
-    'localisation': localisation,
-    'chef': chef,
-    'taches': taches,
-    'portail_client': portailClient,
-  };
+  Map<String, dynamic> toJson() {
+    final m = <String, dynamic>{
+      'client_id':      clientId,
+      'titre':          titre,
+      'description':    description,
+      'statut':         statut,
+      'avancement':     avancement,
+      'date_debut':     dateDebut,
+      'date_fin':       dateFin,
+      'budget_total':   budgetTotal,
+      'budget_depense': budgetDepense,
+      'client':         client,
+      'localisation':   localisation,
+      'chef':           chef,
+      'taches':         taches,
+      'portail_client': portailClient,
+    };
+    if (latitude  != null) m['latitude']  = latitude;
+    if (longitude != null) m['longitude'] = longitude;
+    return m;
+  }
 }
 
 final List<Project> sampleProjects = [
   Project(
-    id: '1',
-    clientId: 'c1',
+    id: '1', clientId: 'c1',
     titre: 'Villa Carthage',
     description: 'Construction villa R+1 avec piscine',
-    statut: 'en_cours',
-    avancement: 65,
-    dateDebut: 'Jan 2024',
-    dateFin: 'Déc 2024',
-    budgetTotal: 8500000,
-    budgetDepense: 1070000,
-    client: 'Groupe OCP',
-    localisation: 'Carthage, Tunis',
-    chef: 'Ahmed Ben Ali',
-    taches: 12,
-    membres: ['Ahmed', 'Sonia', 'Karim'],
-    docs: ['plan.pdf'],
+    statut: 'en_cours', avancement: 65,
+    dateDebut: 'Jan 2024', dateFin: 'Déc 2024',
+    budgetTotal: 8500000, budgetDepense: 1070000,
+    client: 'Groupe OCP', localisation: 'Carthage, Tunis',
+    chef: 'Ahmed Ben Ali', taches: 12,
+    membres: ['Ahmed', 'Sonia', 'Karim'], docs: ['plan.pdf'],
   ),
   Project(
-    id: '2',
-    clientId: 'c2',
+    id: '2', clientId: 'c2',
     titre: 'Résidence Les Pins',
     description: 'Immeuble R+4, 16 appartements',
-    statut: 'en_attente',
-    avancement: 20,
-    dateDebut: 'Mar 2024',
-    dateFin: 'Nov 2025',
-    budgetTotal: 6500000,
-    budgetDepense: 825000,
-    client: 'Société Immobilière TN',
-    localisation: 'La Marsa, Tunis',
-    chef: 'Sonia Mrad',
-    taches: 8,
-    membres: ['Sonia', 'Ali'],
-    docs: ['contrat.pdf'],
+    statut: 'en_attente', avancement: 20,
+    dateDebut: 'Mar 2024', dateFin: 'Nov 2025',
+    budgetTotal: 6500000, budgetDepense: 825000,
+    client: 'Société Immobilière TN', localisation: 'La Marsa, Tunis',
+    chef: 'Sonia Mrad', taches: 8,
+    membres: ['Sonia', 'Ali'], docs: ['contrat.pdf'],
   ),
 ];

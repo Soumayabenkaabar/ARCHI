@@ -4,11 +4,13 @@ import 'package:archi_manager/models/client.dart';
 import 'package:archi_manager/models/membre.dart';
 import 'package:archi_manager/screens/projet_detail_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../constants/colors.dart';
 import '../models/project.dart';
 import '../service/projet_service.dart';
 import '../widgets/project_full_card.dart';
+import '../widgets/map_location_picker.dart';
 
 class ProjetsScreen extends StatefulWidget {
   const ProjetsScreen({super.key});
@@ -236,6 +238,7 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
     String? selectedClientId;
     String? selectedChef;
     bool isSaving = false;
+    LatLng? selectedPosition;
 
     if (!mounted) return;
 
@@ -361,11 +364,14 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
                               ),
                               const SizedBox(width: 12),
                               Expanded(
-                                child: _ProjetField(
-                                  icon: LucideIcons.mapPin,
-                                  label: 'LOCALISATION',
-                                  hint: 'Tunis',
+                                child: _LocationField(
                                   controller: localisationCtrl,
+                                  pickedPosition: selectedPosition,
+                                  onPickMap: () async {
+                                    final pos = await showMapLocationPicker(ctx, initial: selectedPosition);
+                                    if (pos != null) sd(() => selectedPosition = pos);
+                                  },
+                                  onClearPosition: () => sd(() => selectedPosition = null),
                                 ),
                               ),
                             ],
@@ -639,10 +645,11 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
                                               0,
                                           budgetDepense: 0,
                                           client: clientNom,
-                                          localisation: localisationCtrl.text
-                                              .trim(),
+                                          localisation: localisationCtrl.text.trim(),
                                           chef: selectedChef!,
                                           taches: 0,
+                                          latitude:  selectedPosition?.latitude,
+                                          longitude: selectedPosition?.longitude,
                                         );
                                         await ProjetService.addProjet(nouveau);
                                         if (mounted) Navigator.pop(ctx);
@@ -1221,6 +1228,91 @@ class _StatData {
   final IconData icon;
   final Color color;
   const _StatData(this.label, this.value, this.icon, this.color);
+}
+
+// ── Champ localisation avec sélecteur carte ───────────────────────────────────
+class _LocationField extends StatelessWidget {
+  final TextEditingController controller;
+  final LatLng? pickedPosition;
+  final VoidCallback onPickMap;
+  final VoidCallback onClearPosition;
+
+  const _LocationField({
+    required this.controller,
+    required this.pickedPosition,
+    required this.onPickMap,
+    required this.onClearPosition,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Text('LOCALISATION', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5)),
+      const SizedBox(height: 6),
+      TextField(
+        controller: controller,
+        style: const TextStyle(fontSize: 13, color: kTextMain),
+        decoration: InputDecoration(
+          hintText: 'Tunis, Djerba...',
+          hintStyle: const TextStyle(color: kTextSub),
+          prefixIcon: const Icon(LucideIcons.mapPin, size: 14, color: kTextSub),
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
+          filled: true,
+          fillColor: Colors.white,
+          border:        OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
+          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
+          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: kAccent, width: 2)),
+        ),
+      ),
+      const SizedBox(height: 6),
+      // Bouton sélecteur carte + affichage coordonnées
+      if (pickedPosition == null)
+        GestureDetector(
+          onTap: onPickMap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+            decoration: BoxDecoration(
+              color: kAccent.withOpacity(0.07),
+              borderRadius: BorderRadius.circular(7),
+              border: Border.all(color: kAccent.withOpacity(0.25)),
+            ),
+            child: const Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(LucideIcons.mapPin, size: 12, color: kAccent),
+              SizedBox(width: 5),
+              Text('Épingler sur la carte', style: TextStyle(fontSize: 11, color: kAccent, fontWeight: FontWeight.w600)),
+            ]),
+          ),
+        )
+      else
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: BoxDecoration(
+            color: const Color(0xFF10B981).withOpacity(0.08),
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(color: const Color(0xFF10B981).withOpacity(0.3)),
+          ),
+          child: Row(children: [
+            const Icon(LucideIcons.checkCircle, size: 12, color: Color(0xFF10B981)),
+            const SizedBox(width: 5),
+            Expanded(child: Text(
+              '${pickedPosition!.latitude.toStringAsFixed(5)}, ${pickedPosition!.longitude.toStringAsFixed(5)}',
+              style: const TextStyle(fontSize: 11, color: Color(0xFF10B981), fontWeight: FontWeight.w600),
+              overflow: TextOverflow.ellipsis,
+            )),
+            GestureDetector(
+              onTap: onPickMap,
+              child: const Icon(LucideIcons.pencil, size: 11, color: Color(0xFF10B981)),
+            ),
+            const SizedBox(width: 6),
+            GestureDetector(
+              onTap: onClearPosition,
+              child: const Icon(Icons.close_rounded, size: 13, color: Color(0xFF10B981)),
+            ),
+          ]),
+        ),
+    ]);
+  }
 }
 
 void _showSnack(BuildContext context, String msg, Color color) {
