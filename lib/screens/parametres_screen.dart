@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../constants/colors.dart';
@@ -16,7 +17,6 @@ class _ParametresScreenState extends State<ParametresScreen> {
   late final TextEditingController _prenomCtrl;
   late final TextEditingController _nomCtrl;
   late final TextEditingController _telCtrl;
-  late final TextEditingController _cabinetCtrl;
 
   // ── Mot de passe ───────────────────────────────────────────────────────────
   final _ancienMdpCtrl  = TextEditingController();
@@ -47,17 +47,15 @@ class _ParametresScreenState extends State<ParametresScreen> {
   void initState() {
     super.initState();
     final u = _user;
-    _prenomCtrl  = TextEditingController(text: u.prenom);
-    _nomCtrl     = TextEditingController(text: u.nom);
-    _telCtrl     = TextEditingController(text: u.telephone ?? '');
-    _cabinetCtrl = TextEditingController(text: u.cabinet ?? '');
+    _prenomCtrl = TextEditingController(text: u.prenom);
+    _nomCtrl    = TextEditingController(text: u.nom);
+    _telCtrl    = TextEditingController(text: u.telephone ?? '');
     _initialText = {
-      'prenom':  u.prenom,
-      'nom':     u.nom,
-      'tel':     u.telephone ?? '',
-      'cabinet': u.cabinet ?? '',
+      'prenom': u.prenom,
+      'nom':    u.nom,
+      'tel':    u.telephone ?? '',
     };
-    for (final c in [_prenomCtrl, _nomCtrl, _telCtrl, _cabinetCtrl]) {
+    for (final c in [_prenomCtrl, _nomCtrl, _telCtrl]) {
       c.addListener(_checkChanges);
     }
   }
@@ -65,7 +63,7 @@ class _ParametresScreenState extends State<ParametresScreen> {
   @override
   void dispose() {
     for (final c in [
-      _prenomCtrl, _nomCtrl, _telCtrl, _cabinetCtrl,
+      _prenomCtrl, _nomCtrl, _telCtrl,
       _ancienMdpCtrl, _nouveauMdpCtrl, _confirmMdpCtrl,
     ]) {
       c.dispose();
@@ -75,41 +73,46 @@ class _ParametresScreenState extends State<ParametresScreen> {
 
   void _checkChanges() {
     final changed =
-        _prenomCtrl.text  != _initialText['prenom']  ||
-        _nomCtrl.text     != _initialText['nom']      ||
-        _telCtrl.text     != _initialText['tel']      ||
-        _cabinetCtrl.text != _initialText['cabinet'];
+        _prenomCtrl.text != _initialText['prenom'] ||
+        _nomCtrl.text    != _initialText['nom']    ||
+        _telCtrl.text    != _initialText['tel'];
     if (changed != _hasChanges) setState(() => _hasChanges = changed);
   }
 
   void _cancel() {
     setState(() {
-      _prenomCtrl.text  = _initialText['prenom']!;
-      _nomCtrl.text     = _initialText['nom']!;
-      _telCtrl.text     = _initialText['tel']!;
-      _cabinetCtrl.text = _initialText['cabinet']!;
+      _prenomCtrl.text = _initialText['prenom']!;
+      _nomCtrl.text    = _initialText['nom']!;
+      _telCtrl.text    = _initialText['tel']!;
       _hasChanges = false;
     });
   }
 
   Future<void> _save() async {
+    final prenom = _prenomCtrl.text.trim();
+    final nom    = _nomCtrl.text.trim();
+    final tel    = _telCtrl.text.trim();
+
+    if (prenom.length < 2) { _snack('Le prénom doit contenir au moins 2 caractères', kRed); return; }
+    if (nom.length < 2)    { _snack('Le nom doit contenir au moins 2 caractères', kRed); return; }
+    if (tel.isNotEmpty && tel.length != 8) { _snack('Le téléphone doit contenir exactement 8 chiffres', kRed); return; }
+
     setState(() => _saving = true);
     try {
       final updated = Architecte(
         id:        _user.id,
-        nom:       _nomCtrl.text.trim(),
-        prenom:    _prenomCtrl.text.trim(),
+        nom:       nom,
+        prenom:    prenom,
         email:     _user.email,
-        telephone: _telCtrl.text.trim().isEmpty ? null : _telCtrl.text.trim(),
-        cabinet:   _cabinetCtrl.text.trim().isEmpty ? null : _cabinetCtrl.text.trim(),
+        telephone: tel.isEmpty ? null : tel,
+        cabinet:   _user.cabinet,
         createdAt: _user.createdAt,
       );
       await AuthService.updateCurrentUser(updated);
       _initialText = {
-        'prenom':  updated.prenom,
-        'nom':     updated.nom,
-        'tel':     updated.telephone ?? '',
-        'cabinet': updated.cabinet ?? '',
+        'prenom': updated.prenom,
+        'nom':    updated.nom,
+        'tel':    updated.telephone ?? '',
       };
       setState(() { _hasChanges = false; _saving = false; });
       _snack('✓ Profil mis à jour', const Color(0xFF10B981));
@@ -228,11 +231,10 @@ class _ParametresScreenState extends State<ParametresScreen> {
                     final wide = constraints.maxWidth > 700;
 
                     final profilCard = _ProfilCard(
-                      user:        _user,
-                      prenomCtrl:  _prenomCtrl,
-                      nomCtrl:     _nomCtrl,
-                      telCtrl:     _telCtrl,
-                      cabinetCtrl: _cabinetCtrl,
+                      user:       _user,
+                      prenomCtrl: _prenomCtrl,
+                      nomCtrl:    _nomCtrl,
+                      telCtrl:    _telCtrl,
                     );
 
                     final mdpCard = _MdpCard(
@@ -374,14 +376,12 @@ class _ProfilCard extends StatelessWidget {
   final TextEditingController prenomCtrl;
   final TextEditingController nomCtrl;
   final TextEditingController telCtrl;
-  final TextEditingController cabinetCtrl;
 
   const _ProfilCard({
     required this.user,
     required this.prenomCtrl,
     required this.nomCtrl,
     required this.telCtrl,
-    required this.cabinetCtrl,
   });
 
   @override
@@ -416,14 +416,22 @@ class _ProfilCard extends StatelessWidget {
           const SizedBox(height: 24),
 
           Row(children: [
-            Expanded(child: _Field(icon: LucideIcons.user, label: 'Prénom', controller: prenomCtrl)),
+            Expanded(child: _Field(
+              icon: LucideIcons.user, label: 'Prénom', controller: prenomCtrl,
+              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r"[a-zA-ZÀ-ÿ \-']"))],
+            )),
             const SizedBox(width: 16),
-            Expanded(child: _Field(icon: LucideIcons.user, label: 'Nom', controller: nomCtrl)),
+            Expanded(child: _Field(
+              icon: LucideIcons.user, label: 'Nom', controller: nomCtrl,
+              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r"[a-zA-ZÀ-ÿ \-']"))],
+            )),
           ]),
           const SizedBox(height: 16),
-          _Field(icon: LucideIcons.phone, label: 'Téléphone', controller: telCtrl, keyboardType: TextInputType.phone),
-          const SizedBox(height: 16),
-          _Field(icon: LucideIcons.building2, label: 'Cabinet / Entreprise', controller: cabinetCtrl),
+          _Field(
+            icon: LucideIcons.phone, label: 'Téléphone', controller: telCtrl,
+            keyboardType: TextInputType.phone,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(8)],
+          ),
         ],
       ),
     );
@@ -593,12 +601,14 @@ class _Field extends StatelessWidget {
   final String label;
   final TextEditingController controller;
   final TextInputType keyboardType;
+  final List<TextInputFormatter>? inputFormatters;
 
   const _Field({
     required this.icon,
     required this.label,
     required this.controller,
     this.keyboardType = TextInputType.text,
+    this.inputFormatters,
   });
 
   @override
@@ -614,6 +624,7 @@ class _Field extends StatelessWidget {
       TextField(
         controller: controller,
         keyboardType: keyboardType,
+        inputFormatters: inputFormatters,
         style: const TextStyle(color: kTextMain, fontSize: 14, fontWeight: FontWeight.w500),
         decoration: InputDecoration(
           isDense: true,

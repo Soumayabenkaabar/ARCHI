@@ -68,7 +68,6 @@ class _CarteScreenState extends State<CarteScreen> {
   int?   _selectedIndex;
   LatLng? _myPosition;
   bool   _loadingPosition  = false;
-  String _filterStatut     = 'tous';
 
   static const _defaultCenter = LatLng(33.8, 10.85); // Tunisie par défaut
 
@@ -135,15 +134,6 @@ class _CarteScreenState extends State<CarteScreen> {
     }
   }
 
-  List<Project> get _filteredProjects {
-    if (_filterStatut == 'tous') return _projects;
-    return _projects.where((p) => p.statut == _filterStatut).toList();
-  }
-
-  List<_ChantierGeo> get _filteredGeo {
-    if (_filterStatut == 'tous') return _geocoded;
-    return _geocoded.where((c) => c.project.statut == _filterStatut).toList();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -154,8 +144,8 @@ class _CarteScreenState extends State<CarteScreen> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    final geo       = _filteredGeo;
-    final projs     = _filteredProjects;
+    final geo       = _geocoded;
+    final projs     = _projects;
     final nbEnCours = _projects.where((p) => p.statut == 'en_cours').length;
     final nbTermine = _projects.where((p) => p.statut == 'termine').length;
     final nbAttente = _projects.where((p) => p.statut == 'en_attente').length;
@@ -335,40 +325,8 @@ class _CarteScreenState extends State<CarteScreen> {
 
           const SizedBox(height: 24),
 
-          // ── Filtres liste ─────────────────────────────────────────────────
-          Row(children: [
-            Text('Projets (${projs.length})', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: kTextMain)),
-            const Spacer(),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(children: [
-                for (final f in [
-                  ('tous',      'Tous'),
-                  ('en_cours',  'En cours'),
-                  ('en_attente','Planification'),
-                  ('termine',   'Terminés'),
-                  ('annule',    'Annulés'),
-                ])
-                  Padding(
-                    padding: const EdgeInsets.only(left: 6),
-                    child: GestureDetector(
-                      onTap: () => setState(() { _filterStatut = f.$1; _selectedIndex = null; }),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 150),
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: _filterStatut == f.$1 ? kAccent : Colors.white,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: _filterStatut == f.$1 ? kAccent : const Color(0xFFE5E7EB)),
-                        ),
-                        child: Text(f.$2, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
-                            color: _filterStatut == f.$1 ? Colors.white : kTextSub)),
-                      ),
-                    ),
-                  ),
-              ]),
-            ),
-          ]),
+          // ── Titre liste ───────────────────────────────────────────────────
+          Text('Projets (${projs.length})', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: kTextMain)),
 
           const SizedBox(height: 14),
 

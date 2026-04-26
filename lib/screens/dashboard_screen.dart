@@ -2,8 +2,11 @@ import 'package:archi_manager/models/project.dart';
 import 'package:archi_manager/screens/projet_detail_screen.dart';
 import 'package:archi_manager/screens/projets_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:lucide_icons/lucide_icons.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../constants/colors.dart';
+import '../models/notification.dart';
+import '../service/notification_service.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MODELS
@@ -33,17 +36,6 @@ class DashboardStats {
     required this.totalAlertes,
     required this.alertesBudget,
     required this.alertesRetard,
-  });
-}
-
-class AlerteRecente {
-  final String titre;
-  final String description;
-  final String type; // 'budget' | 'retard'
-  const AlerteRecente({
-    required this.titre,
-    required this.description,
-    required this.type,
   });
 }
 
@@ -104,7 +96,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String? _error;
 
   DashboardStats? _stats;
-  List<AlerteRecente> _alertes = [];
+  List<AppNotification> _notifications = [];
   List<ProjetResume> _projets = [];
 
   @override
@@ -142,102 +134,49 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _fetchStats(String? userId) async {
-    // Récupère les projets selon le user_id disponible
     List projetsRaw;
     if (userId != null) {
       projetsRaw = await _supabase
           .from('projets')
-          .select(
-              'id, statut, budget_total, budget_depense, avancement, titre, date_fin')
+          .select('id, statut, budget_total, budget_depense, avancement, titre, date_fin')
           .eq('user_id', userId) as List;
     } else {
       projetsRaw = await _supabase.from('projets').select(
           'id, statut, budget_total, budget_depense, avancement, titre, date_fin') as List;
     }
 
-    debugPrint('║ Projets trouvés (stats): ${projetsRaw.length}');
-    for (final p in projetsRaw) {
-      debugPrint('║   → "${p['titre']}" | statut: "${p['statut']}"');
-    }
-
     int actifs = 0;
     int termines = 0;
     double budgetTotal = 0;
     double budgetDepense = 0;
-    final alertesBudget = <AlerteRecente>[];
-    final alertesRetard = <AlerteRecente>[];
-    final now = DateTime.now();
 
     for (final p in projetsRaw) {
       final statut = (p['statut'] as String? ?? '').trim().toLowerCase();
-      final bTotal = (p['budget_total'] as num?)?.toDouble() ?? 0;
-      final bDepense = (p['budget_depense'] as num?)?.toDouble() ?? 0;
-      final titre = p['titre'] as String? ?? 'Projet';
-      final dateFin = p['date_fin'] as String?;
-
+      budgetTotal  += (p['budget_total']   as num?)?.toDouble() ?? 0;
+      budgetDepense += (p['budget_depense'] as num?)?.toDouble() ?? 0;
       if (statut == 'en_cours') actifs++;
-      if (statut == 'termine') termines++;
-      budgetTotal += bTotal;
-      budgetDepense += bDepense;
-
-      // Alerte budget >= 90%
-      if (bTotal > 0 && bDepense / bTotal >= 0.9) {
-        final pct = ((bDepense / bTotal) * 100).toStringAsFixed(0);
-        alertesBudget.add(AlerteRecente(
-          titre: 'Dépassement budget — $titre',
-          description: 'Budget consommé à $pct%',
-          type: 'budget',
-        ));
-      }
-
-      // Alerte retard : projet en cours avec date_fin dépassée
-      if (statut == 'en_cours' && dateFin != null) {
-        try {
-          final fin = DateTime.parse(dateFin);
-          if (fin.isBefore(now)) {
-            final jours = now.difference(fin).inDays;
-            alertesRetard.add(AlerteRecente(
-              titre: 'Retard — $titre',
-              description:
-                  'Date de fin dépassée de $jours jour${jours > 1 ? 's' : ''}',
-              type: 'retard',
-            ));
-          }
-        } catch (_) {}
-      }
+      if (statut == 'termine')  termines++;
     }
 
-    // Factures en retard
-    try {
-      final facturesRaw = await _supabase
-          .from('factures')
-          .select('numero, montant')
-          .eq('statut', 'en_retard') as List;
-
-      for (final f in facturesRaw) {
-        alertesBudget.add(AlerteRecente(
-          titre: 'Facture en retard — N° ${f['numero'] ?? ''}',
-          description:
-              'Montant : ${_formatMoney((f['montant'] as num?)?.toDouble() ?? 0)} MAD',
-          type: 'budget',
-        ));
-      }
-    } catch (_) {}
-
-    final allAlertes = [...alertesBudget, ...alertesRetard];
+    // Notifications réelles depuis Supabase (triées par date desc)
+    final allNotifs   = await NotificationService.getAll();
+    final nonLues     = allNotifs.where((n) => !n.lue).toList();
+    final budgetCount = nonLues.where((n) => n.type == NotifType.budget).length;
+    final retardCount = nonLues.where((n) => n.type == NotifType.retard).length;
 
     setState(() {
       _stats = DashboardStats(
-        totalProjets: projetsRaw.length,
-        projetsActifs: actifs,
+        totalProjets:    projetsRaw.length,
+        projetsActifs:   actifs,
         projetsTermines: termines,
-        budgetTotal: budgetTotal,
-        budgetDepense: budgetDepense,
-        totalAlertes: allAlertes.length,
-        alertesBudget: alertesBudget.length,
-        alertesRetard: alertesRetard.length,
+        budgetTotal:     budgetTotal,
+        budgetDepense:   budgetDepense,
+        totalAlertes:    nonLues.length,
+        alertesBudget:   budgetCount,
+        alertesRetard:   retardCount,
       );
-      _alertes = allAlertes.take(4).toList();
+      // Affiche les 4 notifications les plus récentes (lues ou non)
+      _notifications = allNotifs.take(4).toList();
     });
   }
 
@@ -338,17 +277,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         SizedBox(height: isMobile ? 20 : 28),
                         _buildKpiGrid(isMobile),
                         SizedBox(height: isMobile ? 20 : 28),
-                        if (_alertes.isNotEmpty) ...[
+                        if (_notifications.isNotEmpty) ...[
                           _buildSectionTitle(
-                            Icons.warning_amber_rounded,
-                            'Alertes récentes',
-                            const Color(0xFFBA7517),
+                            LucideIcons.bell,
+                            'Notifications récentes',
+                            kAccent,
                           ),
                           const SizedBox(height: 12),
-                          ..._alertes.map(
-                            (a) => Padding(
+                          ..._notifications.map(
+                            (n) => Padding(
                               padding: const EdgeInsets.only(bottom: 10),
-                              child: _AlertCard(alerte: a),
+                              child: _AlertCard(notif: n),
                             ),
                           ),
                           SizedBox(height: isMobile ? 16 : 20),
@@ -786,63 +725,69 @@ class _KpiCard extends StatelessWidget {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 class _AlertCard extends StatelessWidget {
-  final AlerteRecente alerte;
-  const _AlertCard({required this.alerte});
+  final AppNotification notif;
+  const _AlertCard({required this.notif});
 
   @override
   Widget build(BuildContext context) {
-    final isBudget = alerte.type == 'budget';
-    final color = isBudget ? kRed : kAccent;
-    final bg =
-        isBudget ? kRed.withOpacity(0.06) : kAccent.withOpacity(0.06);
+    final color = notif.typeColor;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: bg,
+        color: color.withOpacity(0.06),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.25)),
+        border: Border.all(color: color.withOpacity(0.22)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            margin: const EdgeInsets.only(top: 3),
-            width: 8,
-            height: 8,
-            decoration:
-                BoxDecoration(color: color, shape: BoxShape.circle),
+            margin: const EdgeInsets.only(top: 1),
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.12),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(notif.typeIcon, size: 13, color: color),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Row(children: [
+                  if (notif.projet.isNotEmpty)
+                    Flexible(child: Text(
+                      notif.projet,
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: color),
+                      overflow: TextOverflow.ellipsis,
+                    )),
+                  if (!notif.lue) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(10)),
+                      child: const Text('Nouveau', style: TextStyle(fontSize: 9, color: Colors.white, fontWeight: FontWeight.w700)),
+                    ),
+                  ],
+                ]),
+                const SizedBox(height: 2),
                 Text(
-                  alerte.titre,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: color,
-                  ),
+                  notif.message,
+                  style: TextStyle(fontSize: 12, color: color.withOpacity(0.85)),
                 ),
-                if (alerte.description.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    alerte.description,
-                    style: TextStyle(
-                        fontSize: 12, color: color.withOpacity(0.8)),
-                  ),
-                ],
               ],
             ),
           ),
-          Icon(
-            isBudget
-                ? Icons.attach_money_rounded
-                : Icons.access_time_rounded,
-            color: color,
-            size: 16,
+          const SizedBox(width: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(notif.date,  style: const TextStyle(fontSize: 10, color: kTextSub)),
+              if (notif.heure.isNotEmpty)
+                Text(notif.heure, style: const TextStyle(fontSize: 10, color: kTextSub)),
+            ],
           ),
         ],
       ),

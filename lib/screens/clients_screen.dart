@@ -1,4 +1,5 @@
 import 'package:archi_manager/service/client_service.dart';
+import '../models/client.dart' show ClientStats;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons/lucide_icons.dart';
@@ -17,6 +18,7 @@ class _ClientsScreenState extends State<ClientsScreen> {
   final TextEditingController searchController = TextEditingController();
 
   List<Client> clients = [];
+  Map<String, ClientStats> _projectStats = {};
   bool isLoading = true;
   String searchQuery = '';
 
@@ -28,11 +30,15 @@ class _ClientsScreenState extends State<ClientsScreen> {
 
   Future<void> loadClients() async {
     try {
-      final data = await ClientService.getClients();
+      final results = await Future.wait([
+        ClientService.getClients(),
+        ClientService.getProjectStats(),
+      ]);
       if (!mounted) return;
       setState(() {
-        clients = data;
-        isLoading = false;
+        clients       = results[0] as List<Client>;
+        _projectStats = results[1] as Map<String, ClientStats>;
+        isLoading     = false;
       });
     } catch (e) {
       debugPrint('Erreur chargement clients: $e');
@@ -44,7 +50,6 @@ class _ClientsScreenState extends State<ClientsScreen> {
     final nomController = TextEditingController(text: clientToEdit?.nom ?? '');
     final emailController = TextEditingController(text: clientToEdit?.email ?? '');
     final telController = TextEditingController(text: clientToEdit?.telephone ?? '');
-    final entrepriseController = TextEditingController(text: clientToEdit?.entreprise ?? '');
 
     final formKey = GlobalKey<FormState>();
     bool dialogLoading = false;
@@ -133,64 +138,23 @@ class _ClientsScreenState extends State<ClientsScreen> {
                           padding: const EdgeInsets.all(20),
                           child: Column(
                             children: [
-                              if (isMobile) ...[
-                                _DialogField(
-                                  icon: LucideIcons.user,
-                                  label: 'NOM COMPLET *',
-                                  hint: 'Groupe OCP',
-                                  controller: nomController,
-                                  validator: (v) {
-                                    if (v == null || v.trim().isEmpty) return 'Nom obligatoire';
-                                    if (v.trim().length < 2) return 'Minimum 2 caractères';
-                                    if (v.trim().length > 100) return 'Maximum 100 caractères';
-                                    return null;
-                                  },
-                                ),
-                                const SizedBox(height: 12),
-                                _DialogField(
-                                  icon: LucideIcons.building2,
-                                  label: 'ENTREPRISE *',
-                                  hint: 'OCP SA',
-                                  controller: entrepriseController,
-                                  validator: (v) {
-                                    if (v == null || v.trim().isEmpty) return 'Entreprise obligatoire';
-                                    if (v.trim().length > 100) return 'Maximum 100 caractères';
-                                    return null;
-                                  },
-                                ),
-                              ] else
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: _DialogField(
-                                        icon: LucideIcons.user,
-                                        label: 'NOM COMPLET *',
-                                        hint: 'Groupe OCP',
-                                        controller: nomController,
-                                        validator: (v) {
-                                          if (v == null || v.trim().isEmpty) return 'Nom obligatoire';
-                                          if (v.trim().length < 2) return 'Minimum 2 caractères';
-                                          if (v.trim().length > 100) return 'Maximum 100 caractères';
-                                          return null;
-                                        },
-                                      ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: _DialogField(
-                                        icon: LucideIcons.building2,
-                                        label: 'ENTREPRISE *',
-                                        hint: 'OCP SA',
-                                        controller: entrepriseController,
-                                        validator: (v) {
-                                          if (v == null || v.trim().isEmpty) return 'Entreprise obligatoire';
-                                          if (v.trim().length > 100) return 'Maximum 100 caractères';
-                                          return null;
-                                        },
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                              _DialogField(
+                                icon: LucideIcons.user,
+                                label: 'NOM COMPLET *',
+                                hint: 'Mohamed Ben Ali',
+                                controller: nomController,
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.allow(RegExp(r"[a-zA-ZÀ-ÿ \-']")),
+                                ],
+                                validator: (v) {
+                                  if (v == null || v.trim().isEmpty) return 'Nom obligatoire';
+                                  if (v.trim().length < 2) return 'Minimum 2 caractères';
+                                  if (v.trim().length > 100) return 'Maximum 100 caractères';
+                                  if (!RegExp(r"^[a-zA-ZÀ-ÿ \-']+$").hasMatch(v.trim()))
+                                    return 'Le nom ne doit contenir que des lettres';
+                                  return null;
+                                },
+                              ),
                               const SizedBox(height: 12),
 
                               _DialogField(
@@ -313,9 +277,6 @@ class _ClientsScreenState extends State<ClientsScreen> {
                                             telephone: telController.text.trim().isNotEmpty
                                                 ? telController.text.trim()
                                                 : clientToEdit?.telephone ?? '',
-                                            entreprise: entrepriseController.text.trim().isNotEmpty
-                                                ? entrepriseController.text.trim()
-                                                : clientToEdit?.entreprise ?? '',
                                             nbProjets: clientToEdit?.nbProjets ?? 0,
                                             dateDepuis: clientToEdit?.dateDepuis ??
                                                 DateTime.now().year.toString(),
@@ -485,7 +446,7 @@ class _ClientsScreenState extends State<ClientsScreen> {
   }
 
   // ── Popup Consulter un client ───────────────────────────────────────────────
-  void showViewClientDialog(Client client) {
+  void showViewClientDialog(Client client, {ClientStats? stats}) {
     showDialog(
       context: context,
       builder: (dialogContext) {
@@ -564,13 +525,22 @@ class _ClientsScreenState extends State<ClientsScreen> {
                       _InfoRow(
                         icon: LucideIcons.briefcase,
                         label: 'Projets',
-                        value: '${client.nbProjets} projet(s)',
+                        value: '${stats?.total ?? client.nbProjets} projet(s)',
                       ),
+                      if (stats != null && stats.total > 0) ...[
+                        const SizedBox(height: 8),
+                        Wrap(spacing: 6, runSpacing: 6, children: [
+                          if (stats.enCours   > 0) _StatutPill(label: 'En cours',      count: stats.enCours,   color: kAccent),
+                          if (stats.enAttente > 0) _StatutPill(label: 'Planification', count: stats.enAttente, color: const Color(0xFFF59E0B)),
+                          if (stats.termine   > 0) _StatutPill(label: 'Terminé',       count: stats.termine,   color: const Color(0xFF10B981)),
+                          if (stats.annule    > 0) _StatutPill(label: 'Annulé',        count: stats.annule,    color: kRed),
+                        ]),
+                      ],
                       const SizedBox(height: 10),
                       _InfoRow(
                         icon: LucideIcons.calendar,
                         label: 'Client depuis',
-                        value: client.dateDepuis,
+                        value: client.dateDepuisDisplay,
                       ),
                       const SizedBox(height: 10),
                       _InfoRow(
@@ -838,7 +808,8 @@ class _ClientsScreenState extends State<ClientsScreen> {
                                 padding: const EdgeInsets.only(bottom: 16),
                                 child: ClientCard(
                                   client: c,
-                                  onView: () => showViewClientDialog(c),
+                                  stats: _projectStats[c.id],
+                                  onView: () => showViewClientDialog(c, stats: _projectStats[c.id]),
                                   onEdit: () => showAddClientDialog(clientToEdit: c),
                                   onDelete: () => showDeleteConfirmDialog(c),
                                 ),
@@ -857,7 +828,8 @@ class _ClientsScreenState extends State<ClientsScreen> {
                             Expanded(
                               child: ClientCard(
                                 client: rowItems[0],
-                                onView: () => showViewClientDialog(rowItems[0]),
+                                stats: _projectStats[rowItems[0].id],
+                                onView: () => showViewClientDialog(rowItems[0], stats: _projectStats[rowItems[0].id]),
                                 onEdit: () =>
                                     showAddClientDialog(clientToEdit: rowItems[0]),
                                 onDelete: () => showDeleteConfirmDialog(rowItems[0]),
@@ -868,7 +840,8 @@ class _ClientsScreenState extends State<ClientsScreen> {
                               Expanded(
                                 child: ClientCard(
                                   client: rowItems[1],
-                                  onView: () => showViewClientDialog(rowItems[1]),
+                                  stats: _projectStats[rowItems[1].id],
+                                  onView: () => showViewClientDialog(rowItems[1], stats: _projectStats[rowItems[1].id]),
                                   onEdit: () =>
                                       showAddClientDialog(clientToEdit: rowItems[1]),
                                   onDelete: () => showDeleteConfirmDialog(rowItems[1]),
@@ -1062,4 +1035,27 @@ class _InfoRow extends StatelessWidget {
       ],
     );
   }
+}
+
+// ── Pill statut (popup consulter) ─────────────────────────────────────────────
+class _StatutPill extends StatelessWidget {
+  final String label;
+  final int count;
+  final Color color;
+  const _StatutPill({required this.label, required this.count, required this.color});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+    decoration: BoxDecoration(
+      color: color.withOpacity(0.10),
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: color.withOpacity(0.25)),
+    ),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      Container(width: 7, height: 7, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+      const SizedBox(width: 5),
+      Text('$count $label', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: color)),
+    ]),
+  );
 }

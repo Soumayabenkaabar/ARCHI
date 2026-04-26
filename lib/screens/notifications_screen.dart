@@ -14,7 +14,6 @@ class NotificationsScreen extends StatefulWidget {
 class _NotificationsScreenState extends State<NotificationsScreen> {
   List<AppNotification> _notifications = [];
   bool _loading = true;
-  String _filter = 'tous';
 
   @override
   void initState() {
@@ -104,30 +103,15 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     ));
   }
 
-  List<AppNotification> get _filtered {
-    if (_filter == 'tous') return _notifications;
-    final type = {
-      'budget':   NotifType.budget,
-      'retard':   NotifType.retard,
-      'ia':       NotifType.ia,
-      'document': NotifType.document,
-    }[_filter];
-    if (type == null) return _notifications;
-    return _notifications.where((n) => n.type == type).toList();
-  }
 
   @override
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.of(context).size.width < 800;
     final pad = isMobile ? 16.0 : 28.0;
 
-    final filtered   = _filtered;
-    final nonLues    = filtered.where((n) => !n.lue).toList();
-    final lues       = filtered.where((n) => n.lue).toList();
-    final nbBudget   = _notifications.where((n) => n.type == NotifType.budget  && !n.lue).length;
-    final nbRetard   = _notifications.where((n) => n.type == NotifType.retard  && !n.lue).length;
-    final nbIa       = _notifications.where((n) => n.type == NotifType.ia      && !n.lue).length;
-    final nbNonLues  = _notifications.where((n) => !n.lue).length;
+    final nonLues   = _notifications.where((n) => !n.lue).toList();
+    final lues      = _notifications.where((n) => n.lue).toList();
+    final nbNonLues = nonLues.length;
 
     return Container(
       color: kBg,
@@ -176,54 +160,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
                 const SizedBox(height: 24),
 
-                // ── KPI Cards ────────────────────────────────────────────────
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(children: [
-                    _StatCard(label: 'Non lues',       value: '$nbNonLues', icon: LucideIcons.bell,          color: kRed),
-                    const SizedBox(width: 12),
-                    _StatCard(label: 'Alertes budget', value: '$nbBudget',  icon: LucideIcons.alertTriangle, color: const Color(0xFFEF4444)),
-                    const SizedBox(width: 12),
-                    _StatCard(label: 'Alertes retard', value: '$nbRetard',  icon: LucideIcons.clock,         color: const Color(0xFFF59E0B)),
-                    const SizedBox(width: 12),
-                    _StatCard(label: 'Analyses IA',    value: '$nbIa',      icon: LucideIcons.sparkles,      color: const Color(0xFF8B5CF6)),
-                  ]),
-                ),
-
-                const SizedBox(height: 24),
-
-                // ── Filtres ──────────────────────────────────────────────────
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(children: [
-                    for (final f in [
-                      ('tous',     'Toutes',        const Color(0xFF374151)),
-                      ('budget',   '💰 Budget',     const Color(0xFFEF4444)),
-                      ('retard',   '⏰ Retard',     const Color(0xFFF59E0B)),
-                      ('ia',       '✨ Analyse IA', const Color(0xFF8B5CF6)),
-                      ('document', '📄 Document',   const Color(0xFF3B82F6)),
-                    ])
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: GestureDetector(
-                          onTap: () => setState(() => _filter = f.$1),
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 150),
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                            decoration: BoxDecoration(
-                              color: _filter == f.$1 ? f.$3 : Colors.white,
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(color: _filter == f.$1 ? f.$3 : const Color(0xFFE5E7EB)),
-                              boxShadow: _filter == f.$1 ? [BoxShadow(color: f.$3.withOpacity(0.25), blurRadius: 6, offset: const Offset(0, 2))] : [],
-                            ),
-                            child: Text(f.$2, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _filter == f.$1 ? Colors.white : kTextSub)),
-                          ),
-                        ),
-                      ),
-                  ]),
-                ),
-
-                const SizedBox(height: 24),
+                const SizedBox(height: 8),
 
                 // ── Non lues ─────────────────────────────────────────────────
                 if (nonLues.isNotEmpty) ...[
@@ -255,7 +192,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 ],
 
                 // ── Vide ─────────────────────────────────────────────────────
-                if (filtered.isEmpty)
+                if (_notifications.isEmpty)
                   Center(child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 60),
                     child: Column(children: [

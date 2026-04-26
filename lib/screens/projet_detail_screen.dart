@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:archi_manager/models/notification.dart';
+import '../service/notification_service.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:flutter/material.dart';
@@ -1451,6 +1452,7 @@ class _FinancesTab extends StatefulWidget {
 class _FinancesTabState extends State<_FinancesTab> {
   List<Facture> _factures = [];
   bool _loading = true;
+  bool _notifiedBudget = false;
 
   @override void initState() { super.initState(); _load(); }
 
@@ -1459,7 +1461,31 @@ class _FinancesTabState extends State<_FinancesTab> {
       final data = await FactureService.getFactures(widget.project.id);
       setState(() { _factures = data; _loading = false; });
       await ProjetService.syncBudgetDepense(widget.project.id);
+      _checkBudgetAlert();
     } catch (_) { setState(() => _loading = false); }
+  }
+
+  void _checkBudgetAlert() {
+    if (_notifiedBudget) return;
+    final total   = widget.project.budgetTotal;
+    final depense = _factures.fold(0.0, (s, f) => s + f.montant);
+    if (total <= 0) return;
+    final pct = depense / total;
+    if (pct >= 1.0) {
+      _notifiedBudget = true;
+      NotificationService.add(
+        message: 'Budget dépassé de ${(depense - total).toStringAsFixed(0)} DT (${(pct * 100).toStringAsFixed(0)}%)',
+        projet: widget.project.titre,
+        type: NotifType.budget,
+      );
+    } else if (pct >= 0.85) {
+      _notifiedBudget = true;
+      NotificationService.add(
+        message: 'Budget consommé à ${(pct * 100).toStringAsFixed(0)}% — ${(total - depense).toStringAsFixed(0)} DT restants',
+        projet: widget.project.titre,
+        type: NotifType.budget,
+      );
+    }
   }
 
   // ── Accesseurs ──────────────────────────────────────────────────────────────
@@ -4442,12 +4468,36 @@ class _CommentairesTabState extends State<_CommentairesTab> {
   final _ctrl   = TextEditingController();
   final _scroll = ScrollController();
 
+  bool _firstLoad = true;
+  final Set<String> _seenClientIds = {};
+
   @override void initState() { super.initState(); _load(); }
   @override void dispose()   { _ctrl.dispose(); _scroll.dispose(); super.dispose(); }
 
   Future<void> _load() async {
     try {
       final data = await CommentaireService.getCommentaires(widget.project.id);
+
+      if (_firstLoad) {
+        _firstLoad = false;
+        // Initialise les IDs déjà connus — pas de notification au 1er chargement
+        _seenClientIds.addAll(
+          data.where((c) => c.role == 'client').map((c) => c.id),
+        );
+      } else {
+        // Détecte les nouveaux messages client apparus depuis le dernier chargement
+        for (final c in data.where((c) => c.role == 'client')) {
+          if (!_seenClientIds.contains(c.id)) {
+            _seenClientIds.add(c.id);
+            NotificationService.add(
+              message: '${c.auteur} : ${c.contenu.length > 80 ? '${c.contenu.substring(0, 80)}…' : c.contenu}',
+              projet: widget.project.titre,
+              type: NotifType.info,
+            );
+          }
+        }
+      }
+
       setState(() { commentaires = data; loading = false; });
       widget.onCountChanged(data.length);
       Future.delayed(const Duration(milliseconds: 120), () {

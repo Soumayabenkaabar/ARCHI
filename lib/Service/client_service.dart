@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import '../core/supabase_config.dart';
-import '../models/client.dart';
+import '../models/client.dart'; // inclut ClientStats
 import '../service/auth_service.dart';
 
 class ClientService {
@@ -13,11 +13,32 @@ class ClientService {
   // ─── GET CLIENTS ─────────────────────
   static Future<List<Client>> getClients() async {
     try {
-      final data = await _db.from('clients').select();
+      final data = await _db.from('clients').select('*, created_at');
       return (data as List).map((e) => Client.fromJson(e)).toList();
     } catch (e) {
       debugPrint("ERROR GET CLIENTS: $e");
       return [];
+    }
+  }
+
+  // ─── PROJECT STATS PAR CLIENT ────────
+  static Future<Map<String, ClientStats>> getProjectStats() async {
+    try {
+      final uid = AuthService.currentUser?.id;
+      final query = uid != null
+          ? _db.from('projets').select('client_id, statut').eq('user_id', uid)
+          : _db.from('projets').select('client_id, statut');
+      final data = await query as List;
+      final result = <String, ClientStats>{};
+      for (final p in data) {
+        final cid = p['client_id']?.toString() ?? '';
+        if (cid.isEmpty) continue;
+        result.putIfAbsent(cid, ClientStats.new).add(p['statut'] as String? ?? '');
+      }
+      return result;
+    } catch (e) {
+      debugPrint("ERROR GET PROJECT STATS: $e");
+      return {};
     }
   }
 

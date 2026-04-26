@@ -679,9 +679,9 @@ class _GanttCard extends StatelessWidget {
               onPressed: () => Navigator.of(context).pop(),
             ),
           ),
-          body: SingleChildScrollView(
+          body: Padding(
             padding: const EdgeInsets.all(16),
-            child: _GanttContent(projects: projects),
+            child: _GanttContent(projects: projects, expanded: true),
           ),
         ),
       ),
@@ -697,215 +697,378 @@ class _GanttCard extends StatelessWidget {
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 20, 16, 0),
+          padding: const EdgeInsets.fromLTRB(20, 20, 16, 16),
           child: Row(children: [
-            const Expanded(child: Text('Planning Gantt',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: kTextMain))),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(color: kAccent.withValues(alpha: 0.10), borderRadius: BorderRadius.circular(8)),
+              child: const Icon(LucideIcons.ganttChart, color: kAccent, size: 16),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Planning Gantt', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: kTextMain)),
+              Text('Vue chronologique des projets', style: TextStyle(fontSize: 11, color: kTextSub)),
+            ])),
             Tooltip(
-              message: 'Agrandir',
+              message: 'Plein écran',
               child: InkWell(
                 onTap: () => _openFullscreen(context),
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
-                  padding: const EdgeInsets.all(8),
+                  padding: const EdgeInsets.all(7),
                   decoration: BoxDecoration(color: kBg, borderRadius: BorderRadius.circular(8),
                       border: Border.all(color: const Color(0xFFE0E0E0))),
-                  child: const Icon(Icons.open_in_full_rounded, size: 16, color: kTextSub),
+                  child: const Icon(Icons.open_in_full_rounded, size: 15, color: kTextSub),
                 ),
               ),
             ),
           ]),
         ),
-        const SizedBox(height: 16),
+        const Divider(height: 1, color: Color(0xFFF3F4F6)),
         _GanttContent(projects: projects),
-        const SizedBox(height: 8),
+        // Légende
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+          child: Wrap(spacing: 16, runSpacing: 6, children: [
+            _GanttLegend(color: kAccent,                     label: 'En cours'),
+            _GanttLegend(color: const Color(0xFFF59E0B),    label: 'Planification'),
+            _GanttLegend(color: const Color(0xFF10B981),    label: 'Terminé'),
+            _GanttLegend(color: const Color(0xFF9CA3AF),    label: 'Annulé'),
+            _GanttLegend(color: const Color(0xFFEF4444),    label: "Aujourd'hui", isDash: true),
+          ]),
+        ),
       ]),
     );
   }
 }
 
+class _GanttLegend extends StatelessWidget {
+  final Color color;
+  final String label;
+  final bool isDash;
+  const _GanttLegend({required this.color, required this.label, this.isDash = false});
+
+  @override
+  Widget build(BuildContext context) => Row(mainAxisSize: MainAxisSize.min, children: [
+    isDash
+        ? Container(width: 16, height: 2, color: color)
+        : Container(width: 10, height: 10,
+            decoration: BoxDecoration(color: color.withValues(alpha: 0.85), borderRadius: BorderRadius.circular(3))),
+    const SizedBox(width: 5),
+    Text(label, style: const TextStyle(color: kTextSub, fontSize: 11)),
+  ]);
+}
+
 // ─── Gantt Content ─────────────────────────────────────────────────────────────
 class _GanttContent extends StatefulWidget {
   final List<Project> projects;
-  const _GanttContent({required this.projects});
+  final bool expanded;
+  const _GanttContent({required this.projects, this.expanded = false});
 
   @override
   State<_GanttContent> createState() => _GanttContentState();
 }
 
 class _GanttContentState extends State<_GanttContent> {
-  final ScrollController _hScroll = ScrollController();
-  final ScrollController _bScroll = ScrollController();
+  final _scrollCtrl = ScrollController();
+  int? _tooltip;
+
+  static const _rowH    = 58.0;
+  static const _barH    = 22.0;
+  static const _headerH = 56.0; // year + month rows
 
   @override
-  void initState() {
-    super.initState();
-    _hScroll.addListener(() {
-      if (_bScroll.hasClients && _bScroll.offset != _hScroll.offset) {
-        _bScroll.jumpTo(_hScroll.offset);
-      }
-    });
-    _bScroll.addListener(() {
-      if (_hScroll.hasClients && _hScroll.offset != _bScroll.offset) {
-        _hScroll.jumpTo(_bScroll.offset);
-      }
-    });
-  }
+  void dispose() { _scrollCtrl.dispose(); super.dispose(); }
 
-  @override
-  void dispose() {
-    _hScroll.dispose();
-    _bScroll.dispose();
-    super.dispose();
-  }
-
-  // Build month list from earliest start to latest end (or fallback 24 months)
-  List<DateTime> _buildMonths(List<Project> projects) {
+  List<DateTime> _buildMonths() {
     DateTime? minD, maxD;
-    for (final p in projects) {
+    for (final p in widget.projects) {
       final s = _parseDate(p.dateDebut);
       final e = _parseDate(p.dateFin);
       if (s != null && (minD == null || s.isBefore(minD))) minD = s;
       if (e != null && (maxD == null || e.isAfter(maxD))) maxD = e;
     }
     final now = DateTime.now();
-    minD ??= DateTime(now.year, now.month - 6);
-    maxD ??= DateTime(now.year + 1, now.month + 6);
-    // Ensure at least 12 months visible
-    if (maxD.difference(minD).inDays < 365) {
+    minD ??= DateTime(now.year, now.month - 3);
+    maxD ??= DateTime(now.year + 1, now.month + 3);
+    if (maxD.difference(minD).inDays < 300)
       maxD = DateTime(minD.year + 1, minD.month + 2);
-    }
 
     final months = <DateTime>[];
     var cur = DateTime(minD.year, minD.month);
-    while (!cur.isAfter(maxD)) {
+    while (!cur.isAfter(DateTime(maxD.year, maxD.month))) {
       months.add(cur);
-      cur = DateTime(cur.month == 12 ? cur.year + 1 : cur.year, cur.month == 12 ? 1 : cur.month + 1);
+      cur = cur.month == 12
+          ? DateTime(cur.year + 1, 1)
+          : DateTime(cur.year, cur.month + 1);
     }
     return months;
   }
 
+  Color _barColor(Project p) {
+    switch (p.statut) {
+      case 'termine':   return const Color(0xFF10B981);
+      case 'en_attente':return const Color(0xFFF59E0B);
+      case 'annule':    return const Color(0xFF9CA3AF);
+      default:          return kAccent;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final projects = widget.projects;
-    final months = _buildMonths(projects);
-    const projColW = 180.0, cellW = 60.0;
-    final timelineW = months.length * cellW;
-    final baseDate = months.first;
+    final isMobile = MediaQuery.of(context).size.width < 600;
+    final projColW = isMobile ? 120.0 : 200.0;
+    final cellW    = isMobile ? 52.0  : 64.0;
 
-    int monthIdx(DateTime? d) {
+    final months   = _buildMonths();
+    final base     = months.first;
+    final timelineW = months.length * cellW;
+    final now      = DateTime.now();
+
+    int mIdx(DateTime? d) {
       if (d == null) return -1;
-      return (d.year - baseDate.year) * 12 + (d.month - baseDate.month);
+      return (d.year - base.year) * 12 + (d.month - base.month);
     }
 
-    final now = DateTime.now();
-    final nowIdx = monthIdx(now);
+    final nowIdx = mIdx(now);
+    // fractional position within current month
+    final daysInMonth = DateTime(now.year, now.month + 1, 0).day;
+    final nowX = nowIdx * cellW + (now.day / daysInMonth) * cellW;
 
-    return Column(children: [
-      // Header
-      Container(
-        color: const Color(0xFF1F2937),
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        child: Row(children: [
-          SizedBox(
-            width: projColW,
-            child: const Padding(padding: EdgeInsets.only(left: 20),
-              child: Text('Projet', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13))),
-          ),
-          Expanded(
-            child: SingleChildScrollView(
-              controller: _hScroll,
-              scrollDirection: Axis.horizontal,
-              child: SizedBox(
-                width: timelineW,
-                child: Row(children: months.map((m) => SizedBox(
-                  width: cellW,
-                  child: Text(_monthLabel(m), style: const TextStyle(color: Colors.white54, fontSize: 10)),
-                )).toList()),
-              ),
+    // Group months by year for the header
+    final yearGroups = <int, int>{};
+    for (final m in months) yearGroups[m.year] = (yearGroups[m.year] ?? 0) + 1;
+
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+
+      // ── Colonne gauche FIXE ───────────────────────────────────────────────
+      SizedBox(
+        width: projColW,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+
+          // Header cell
+          Container(
+            height: _headerH,
+            decoration: const BoxDecoration(
+              color: Color(0xFF1F2937),
+              border: Border(right: BorderSide(color: Color(0xFF374151))),
             ),
+            alignment: Alignment.centerLeft,
+            padding: const EdgeInsets.only(left: 16),
+            child: const Text('Projet',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
           ),
+
+          // Project rows
+          ...List.generate(widget.projects.length, (i) {
+            final p = widget.projects[i];
+            final color = _barColor(p);
+            final isOdd = i.isOdd;
+            return GestureDetector(
+              onTap: () => setState(() => _tooltip = _tooltip == i ? null : i),
+              child: Container(
+                height: _rowH,
+                color: isOdd ? const Color(0xFFFAFAFA) : Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                alignment: Alignment.centerLeft,
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Text(p.titre,
+                      style: TextStyle(fontWeight: FontWeight.w600,
+                          fontSize: isMobile ? 11 : 12, color: kTextMain),
+                      maxLines: 2, overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 3),
+                  Row(children: [
+                    Container(width: 7, height: 7,
+                        decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+                    const SizedBox(width: 4),
+                    Text('${p.avancement}%',
+                        style: const TextStyle(color: kTextSub, fontSize: 10)),
+                  ]),
+                ]),
+              ),
+            );
+          }),
         ]),
       ),
 
-      // Rows
-      ...projects.map((p) {
-        final startIdx = monthIdx(_parseDate(p.dateDebut));
-        final endIdx   = monthIdx(_parseDate(p.dateFin));
-        final hasBar   = startIdx >= 0 && endIdx >= startIdx;
-        final barLeft  = hasBar ? startIdx * cellW : 0.0;
-        final barW     = hasBar ? (endIdx - startIdx + 1) * cellW : 0.0;
-        final barColor = p.statut == 'termine'   ? const Color(0xFF10B981)
-                       : p.statut == 'en_attente' ? const Color(0xFFF59E0B)
-                       : p.statut == 'annule'     ? const Color(0xFF9CA3AF)
-                       : kAccent;
+      // ── Timeline scrollable ───────────────────────────────────────────────
+      Expanded(
+        child: SingleChildScrollView(
+          controller: _scrollCtrl,
+          scrollDirection: Axis.horizontal,
+          child: SizedBox(
+            width: timelineW,
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
 
-        return Container(
-          decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Color(0xFFF3F4F6)))),
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-            SizedBox(
-              width: projColW,
-              child: Padding(padding: const EdgeInsets.only(left: 20), child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(p.titre, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: kTextMain),
-                      overflow: TextOverflow.ellipsis),
-                  const SizedBox(height: 2),
-                  Row(children: [
-                    Container(width: 6, height: 6, decoration: BoxDecoration(color: barColor, shape: BoxShape.circle)),
-                    const SizedBox(width: 4),
-                    Text('${p.avancement}%', style: const TextStyle(color: kTextSub, fontSize: 11)),
-                  ]),
-                ],
-              )),
-            ),
-            Expanded(
-              child: SingleChildScrollView(
-                controller: _bScroll,
-                scrollDirection: Axis.horizontal,
-                child: SizedBox(
-                  width: timelineW, height: 36,
-                  child: Stack(children: [
-                    // Grid lines
-                    ...List.generate(months.length, (i) => Positioned(
-                      left: i * cellW, top: 0, bottom: 0,
-                      child: Container(width: 1, color: const Color(0xFFF3F4F6)),
-                    )),
-                    // Today line
-                    if (nowIdx >= 0 && nowIdx < months.length)
-                      Positioned(
-                        left: nowIdx * cellW + cellW / 2, top: 0, bottom: 0,
-                        child: Container(width: 2, color: const Color(0xFFEF4444).withValues(alpha: 0.5)),
-                      ),
-                    // Project bar
-                    if (hasBar) ...[
-                      Positioned(
-                        left: barLeft, top: 8, width: barW, height: 20,
-                        child: Container(decoration: BoxDecoration(
-                          color: const Color(0xFFE5E7EB), borderRadius: BorderRadius.circular(4))),
-                      ),
-                      Positioned(
-                        left: barLeft, top: 8,
-                        width: (barW * p.avancement / 100).clamp(0, barW),
-                        height: 20,
-                        child: Container(
-                          decoration: BoxDecoration(color: barColor, borderRadius: BorderRadius.circular(4)),
-                          alignment: Alignment.center,
-                          child: p.avancement > 10 ? Text('${p.avancement}%',
-                              style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w700)) : null,
+              // ── Header années + mois ─────────────────────────────────────
+              SizedBox(
+                height: _headerH,
+                child: Column(children: [
+                  // Années
+                  SizedBox(
+                    height: 22,
+                    child: Row(children: yearGroups.entries.map((e) => Container(
+                      width: e.value * cellW,
+                      color: const Color(0xFF111827),
+                      alignment: Alignment.centerLeft,
+                      padding: const EdgeInsets.only(left: 8),
+                      child: Text('${e.key}',
+                          style: const TextStyle(color: Colors.white,
+                              fontWeight: FontWeight.w800, fontSize: 11)),
+                    )).toList()),
+                  ),
+                  // Mois
+                  SizedBox(
+                    height: 34,
+                    child: Row(children: months.map((m) {
+                      final isNow = m.year == now.year && m.month == now.month;
+                      return Container(
+                        width: cellW,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: isNow
+                              ? kAccent.withValues(alpha: 0.25)
+                              : const Color(0xFF1F2937),
                         ),
-                      ),
-                    ],
-                  ]),
-                ),
+                        child: Text(
+                          _shortMonth(m),
+                          style: TextStyle(
+                            color: isNow ? kAccent : Colors.white54,
+                            fontSize: 10,
+                            fontWeight: isNow ? FontWeight.w700 : FontWeight.w400,
+                          ),
+                        ),
+                      );
+                    }).toList()),
+                  ),
+                ]),
               ),
-            ),
-          ]),
-        );
-      }),
+
+              // ── Lignes de projet ─────────────────────────────────────────
+              Stack(children: [
+                // Colonne de barres
+                Column(children: List.generate(widget.projects.length, (i) {
+                  final p = widget.projects[i];
+                  final color = _barColor(p);
+                  final startIdx = mIdx(_parseDate(p.dateDebut));
+                  final endIdx   = mIdx(_parseDate(p.dateFin));
+                  final hasBar   = startIdx >= 0 && endIdx >= startIdx;
+                  final barLeft  = hasBar ? startIdx * cellW : 0.0;
+                  final barW     = hasBar ? (endIdx - startIdx + 1) * cellW : 0.0;
+                  final fillW    = hasBar ? (barW * p.avancement / 100).clamp(0.0, barW) : 0.0;
+                  final isOdd    = i.isOdd;
+                  final showTip  = _tooltip == i;
+
+                  return GestureDetector(
+                    onTap: () => setState(() => _tooltip = _tooltip == i ? null : i),
+                    child: Container(
+                      height: _rowH,
+                      color: isOdd ? const Color(0xFFFAFAFA) : Colors.white,
+                      child: Stack(children: [
+
+                        // Lignes verticales mois
+                        ...List.generate(months.length, (mi) => Positioned(
+                          left: mi * cellW, top: 0, bottom: 0,
+                          child: Container(width: 1, color: const Color(0xFFF0F0F0)),
+                        )),
+
+                        // Barre fond (durée totale)
+                        if (hasBar) Positioned(
+                          left: barLeft,
+                          top: (_rowH - _barH) / 2,
+                          width: barW,
+                          height: _barH,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: color.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                          ),
+                        ),
+
+                        // Barre remplie (avancement)
+                        if (hasBar && fillW > 0) Positioned(
+                          left: barLeft,
+                          top: (_rowH - _barH) / 2,
+                          width: fillW,
+                          height: _barH,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: color,
+                              borderRadius: BorderRadius.circular(6),
+                              boxShadow: [BoxShadow(
+                                color: color.withValues(alpha: 0.30),
+                                blurRadius: 4, offset: const Offset(0, 2),
+                              )],
+                            ),
+                            alignment: Alignment.center,
+                            child: fillW > 28 ? Text('${p.avancement}%',
+                                style: const TextStyle(color: Colors.white,
+                                    fontSize: 9, fontWeight: FontWeight.w800)) : null,
+                          ),
+                        ),
+
+                        // Tooltip sur tap
+                        if (showTip && hasBar) Positioned(
+                          left: (barLeft + barW / 2 - 80).clamp(0, timelineW - 160),
+                          top: 2,
+                          child: Material(
+                            elevation: 8,
+                            borderRadius: BorderRadius.circular(8),
+                            color: const Color(0xFF1F2937),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min, children: [
+                                Text(p.titre, style: const TextStyle(color: Colors.white,
+                                    fontWeight: FontWeight.w700, fontSize: 11),
+                                    overflow: TextOverflow.ellipsis),
+                                const SizedBox(height: 3),
+                                if (p.dateDebut != null)
+                                  Text('Début : ${p.dateDebut}',
+                                      style: const TextStyle(color: Colors.white60, fontSize: 10)),
+                                if (p.dateFin != null)
+                                  Text('Fin : ${p.dateFin}',
+                                      style: const TextStyle(color: Colors.white60, fontSize: 10)),
+                                Text('Avancement : ${p.avancement}%',
+                                    style: TextStyle(color: color, fontSize: 10,
+                                        fontWeight: FontWeight.w700)),
+                              ]),
+                            ),
+                          ),
+                        ),
+                      ]),
+                    ),
+                  );
+                })),
+
+                // Ligne "Aujourd'hui" par-dessus tout
+                if (nowIdx >= 0 && nowIdx < months.length)
+                  Positioned(
+                    left: nowX,
+                    top: 0,
+                    bottom: 0,
+                    child: IgnorePointer(child: Container(
+                      width: 2,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEF4444),
+                        boxShadow: [BoxShadow(color: const Color(0xFFEF4444).withValues(alpha: 0.3), blurRadius: 4)],
+                      ),
+                    )),
+                  ),
+              ]),
+            ]),
+          ),
+        ),
+      ),
     ]);
   }
+}
+
+String _shortMonth(DateTime d) {
+  const n = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
+  return n[d.month - 1];
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
