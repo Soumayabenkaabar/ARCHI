@@ -25,6 +25,8 @@ import '../service/project_member_service.dart';
 import '../service/projet_service.dart';
 import '../service/membre_service.dart';
 import '../service/auth_service.dart';
+import '../models/conge.dart';
+import '../service/conge_service.dart';
 import '../service/model3d_service.dart';
 import '../models/model3d.dart';
 import '../utils/glb_parser.dart';
@@ -711,6 +713,10 @@ class _TachesTabState extends State<_TachesTab> {
   Model3D? _model3D;
   bool loading    = true;
   bool _showGantt = false;
+  Map<String, List<Map<String, String>>> _membresParTache = {};
+  Map<String, List<String>> _membresNomParTache = {};
+  List<Membre> _tousLesMembres = [];
+  Map<String, List<Conge>> _congesParMembre = {};
 
   @override void initState() { super.initState(); _load(); }
 
@@ -720,11 +726,26 @@ class _TachesTabState extends State<_TachesTab> {
         TacheService.getTaches(widget.project.id),
         PhaseService.getPhases(widget.project.id),
         Model3DService.getModel(widget.project.id).catchError((_) => null),
+        MembreService.getMembresParTacheDetail(widget.project.id),
+        MembreService.getMembres(),
+        CongeService.getAllConges(),
       ]);
       setState(() {
         taches  = results[0] as List<Tache>;
         phases  = results[1] as List<Phase>;
         _model3D = results[2] as Model3D?;
+        _membresParTache = results[3] as Map<String, List<Map<String, String>>>;
+        _membresNomParTache = {
+          for (final e in _membresParTache.entries)
+            e.key: e.value.map((m) => m['nom'] as String).toList()
+        };
+        _tousLesMembres = results[4] as List<Membre>;
+        final allConges = results[5] as List<Conge>;
+        _congesParMembre = {};
+        for (final c in allConges) {
+          _congesParMembre.putIfAbsent(c.membreId, () => []);
+          _congesParMembre[c.membreId]!.add(c);
+        }
         loading = false;
       });
     } catch (_) { setState(() => loading = false); }
@@ -818,6 +839,7 @@ class _TachesTabState extends State<_TachesTab> {
       final prog = _progressionPhase(ph.id);
       return _PhaseSection(
         phase: ph, taches: list, progression: prog,
+        membresNomParTache: _membresNomParTache,
         onAddTache:      () => _showTacheDialog(context, null, preselectedPhaseId: ph.id),
         onEditTache:     (t) => _showTacheDialog(context, t),
         onViewTache:     (t) => _showViewDialog(context, t),
@@ -856,6 +878,7 @@ class _TachesTabState extends State<_TachesTab> {
         padding: const EdgeInsets.only(bottom: 10),
         child: _TacheCard(
           tache: e.value, index: e.key + 1,
+          assignedMembres: _membresNomParTache[e.value.id] ?? [],
           onStatusChanged: (s) async {
             await TacheService.updateStatut(e.value.id, s, projetId: widget.project.id, ancienStatut: e.value.statut, budgetEstime: e.value.budgetEstime);
             _load();
@@ -866,6 +889,35 @@ class _TachesTabState extends State<_TachesTab> {
         ),
       )),
     ];
+  }
+
+  bool _membreDisponible(String membreId, String debutStr, String finStr, {String? excludeTacheId}) {
+    if (debutStr.isEmpty || finStr.isEmpty) return true;
+    final taskDebut = DateTime.tryParse(debutStr);
+    final taskFin   = DateTime.tryParse(finStr);
+    if (taskDebut == null || taskFin == null) return true;
+
+    // 1. Conflit avec un congé
+    if ((_congesParMembre[membreId] ?? []).any(
+      (c) => !c.dateDebut.isAfter(taskFin) && !c.dateFin.isBefore(taskDebut))) {
+      return false;
+    }
+
+    // 2. Conflit avec une autre tâche déjà assignée sur la même période
+    for (final entry in _membresParTache.entries) {
+      if (entry.key == excludeTacheId) continue;
+      if (!entry.value.any((m) => m['id'] == membreId)) continue;
+      try {
+        final t = taches.firstWhere((t) => t.id == entry.key);
+        if (t.dateDebut == null || t.dateFin == null) continue;
+        final td = DateTime.tryParse(t.dateDebut!);
+        final tf = DateTime.tryParse(t.dateFin!);
+        if (td == null || tf == null) continue;
+        if (!td.isAfter(taskFin) && !tf.isBefore(taskDebut)) return false;
+      } catch (_) { continue; }
+    }
+
+    return true;
   }
 
   void _showPhaseDialog(BuildContext context, Phase? existing) {
@@ -939,6 +991,11 @@ class _TachesTabState extends State<_TachesTab> {
 
     // Mesh selection state
     final selectedMeshes = Set<String>.from(existing?.meshNames ?? []);
+
+    // Member selection state
+    final selectedMembres = Set<String>.from(
+      isEdit ? (_membresParTache[existing!.id]?.map((m) => m['id'] as String) ?? []) : <String>[],
+    );
 
     // Mini 3D viewer controller (only if model available)
     WebViewController? viewerCtrl;
@@ -1097,6 +1154,66 @@ class _TachesTabState extends State<_TachesTab> {
               )),
             )),
         ]),
+        if (_tousLesMembres.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          Row(children: [
+            const Expanded(child: Text('ÉQUIPE ASSIGNÉE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5))),
+            if (debutCtrl.text.isNotEmpty && finCtrl.text.isNotEmpty)
+              const Text('disponibles sur la période', style: TextStyle(fontSize: 10, color: kTextSub)),
+          ]),
+          const SizedBox(height: 8),
+          Builder(builder: (_) {
+            final hasDates = debutCtrl.text.isNotEmpty && finCtrl.text.isNotEmpty;
+            final membres  = hasDates
+                ? _tousLesMembres.where((m) => _membreDisponible(
+                    m.id, debutCtrl.text, finCtrl.text,
+                    excludeTacheId: isEdit ? existing!.id : null,
+                  )).toList()
+                : _tousLesMembres;
+            if (membres.isEmpty)
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE5E7EB))),
+                child: Row(children: [
+                  const Icon(LucideIcons.userX, size: 14, color: kTextSub),
+                  const SizedBox(width: 8),
+                  Text(hasDates ? 'Aucun membre disponible sur cette période' : 'Aucun membre dans l\'équipe', style: const TextStyle(fontSize: 12, color: kTextSub)),
+                ]),
+              );
+            return Wrap(spacing: 6, runSpacing: 6, children: [
+              for (final m in membres)
+                GestureDetector(
+                  onTap: () => sd(() {
+                    if (selectedMembres.contains(m.id)) selectedMembres.remove(m.id);
+                    else selectedMembres.add(m.id);
+                  }),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: selectedMembres.contains(m.id) ? kAccent : Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: selectedMembres.contains(m.id) ? kAccent : const Color(0xFFE5E7EB)),
+                    ),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      CircleAvatar(
+                        radius: 9,
+                        backgroundColor: selectedMembres.contains(m.id) ? Colors.white.withOpacity(0.25) : kAccent.withOpacity(0.12),
+                        child: Text(m.nom.isNotEmpty ? m.nom[0].toUpperCase() : '?', style: TextStyle(fontSize: 8, color: selectedMembres.contains(m.id) ? Colors.white : kAccent, fontWeight: FontWeight.w700)),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(m.nom, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: selectedMembres.contains(m.id) ? Colors.white : kTextSub)),
+                    ]),
+                  ),
+                ),
+            ]);
+          }),
+          if (debutCtrl.text.isEmpty || finCtrl.text.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(top: 6),
+              child: Text('Sélectionnez les dates pour filtrer les membres disponibles', style: TextStyle(fontSize: 10, color: kTextSub)),
+            ),
+        ],
       ]);
 
       // Mesh panel (right side when 3D model available)
@@ -1223,9 +1340,11 @@ class _TachesTabState extends State<_TachesTab> {
                 if (isEdit) {
                   if (statut != existing!.statut) await TacheService.updateStatut(t.id, statut, projetId: widget.project.id, ancienStatut: existing.statut, budgetEstime: t.budgetEstime);
                   await TacheService.updateTache(t);
+                  await MembreService.assignMembresForTache(t.id, selectedMembres.toList(), widget.project.id);
                   _snack(context, 'Tâche modifiée', kAccent);
                 } else {
-                  await TacheService.addTache(t);
+                  final newId = await TacheService.addTache(t);
+                  await MembreService.assignMembresForTache(newId, selectedMembres.toList(), widget.project.id);
                   _snack(context, 'Tâche ajoutée', kAccent);
                 }
                 _pollTimer?.cancel();
@@ -1332,6 +1451,10 @@ window.addEventListener('resize',()=>{camera.aspect=window.innerWidth/window.inn
           ]),
           const SizedBox(height: 10),
           _ViewInfoTile(icon: LucideIcons.banknote, label: 'Budget prévu', value: t.budgetEstime > 0 ? _fmtNum(t.budgetEstime) : '—'),
+          if ((_membresNomParTache[t.id] ?? []).isNotEmpty) ...[
+            const SizedBox(height: 10),
+            _ViewInfoTile(icon: LucideIcons.users, label: 'Équipe assignée', value: (_membresNomParTache[t.id] ?? []).join(', ')),
+          ],
           if (t.remarques.isNotEmpty) ...[
             const SizedBox(height: 10),
             Container(width: double.infinity, padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFFDE68A))), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Row(children: const [Icon(LucideIcons.messageSquare, size: 12, color: Color(0xFFD97706)), SizedBox(width: 5), Text('Remarques', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFFD97706)))]), const SizedBox(height: 5), Text(t.remarques, style: const TextStyle(fontSize: 13, color: kTextMain, height: 1.5))])),
@@ -1346,10 +1469,11 @@ window.addEventListener('resize',()=>{camera.aspect=window.innerWidth/window.inn
 // ── Phase section & Tache card ────────────────────────────────────────────────
 class _PhaseSection extends StatefulWidget {
   final Phase phase; final List<Tache> taches; final double progression;
+  final Map<String, List<String>> membresNomParTache;
   final VoidCallback onAddTache, onEditPhase, onDeletePhase;
   final void Function(Tache) onEditTache, onViewTache, onDeleteTache;
   final void Function(Tache, String) onStatusChanged;
-  const _PhaseSection({required this.phase, required this.taches, required this.progression, required this.onAddTache, required this.onEditTache, required this.onViewTache, required this.onDeleteTache, required this.onStatusChanged, required this.onEditPhase, required this.onDeletePhase});
+  const _PhaseSection({required this.phase, required this.taches, required this.progression, this.membresNomParTache = const {}, required this.onAddTache, required this.onEditTache, required this.onViewTache, required this.onDeleteTache, required this.onStatusChanged, required this.onEditPhase, required this.onDeletePhase});
   @override State<_PhaseSection> createState() => _PhaseSectionState();
 }
 class _PhaseSectionState extends State<_PhaseSection> {
@@ -1385,7 +1509,7 @@ class _PhaseSectionState extends State<_PhaseSection> {
         if (widget.taches.isEmpty)
           GestureDetector(onTap: widget.onAddTache, child: Container(margin: const EdgeInsets.only(left: 2), padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE5E7EB))), child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(LucideIcons.plus, size: 13, color: kAccent), const SizedBox(width: 6), const Text('Ajouter une tâche à cette phase', style: TextStyle(fontSize: 12, color: kAccent, fontWeight: FontWeight.w500))])))
         else
-          ...widget.taches.asMap().entries.map((e) => Padding(padding: const EdgeInsets.only(bottom: 8), child: _TacheCard(tache: e.value, index: e.key + 1, onStatusChanged: (s) => widget.onStatusChanged(e.value, s), onDelete: () => widget.onDeleteTache(e.value), onEdit: () => widget.onEditTache(e.value), onView: () => widget.onViewTache(e.value)))),
+          ...widget.taches.asMap().entries.map((e) => Padding(padding: const EdgeInsets.only(bottom: 8), child: _TacheCard(tache: e.value, index: e.key + 1, assignedMembres: widget.membresNomParTache[e.value.id] ?? [], onStatusChanged: (s) => widget.onStatusChanged(e.value, s), onDelete: () => widget.onDeleteTache(e.value), onEdit: () => widget.onEditTache(e.value), onView: () => widget.onViewTache(e.value)))),
       ],
     ]));
   }
@@ -1395,7 +1519,8 @@ class _TacheCard extends StatefulWidget {
   final Tache tache; final int index;
   final ValueChanged<String> onStatusChanged;
   final VoidCallback onDelete, onEdit, onView;
-  const _TacheCard({required this.tache, required this.index, required this.onStatusChanged, required this.onDelete, required this.onEdit, required this.onView});
+  final List<String> assignedMembres;
+  const _TacheCard({required this.tache, required this.index, required this.onStatusChanged, required this.onDelete, required this.onEdit, required this.onView, this.assignedMembres = const []});
   @override State<_TacheCard> createState() => _TacheCardState();
 }
 class _TacheCardState extends State<_TacheCard> {
@@ -1421,6 +1546,30 @@ class _TacheCardState extends State<_TacheCard> {
           const SizedBox(height: 10), const Divider(height: 1, color: Color(0xFFF3F4F6)), const SizedBox(height: 6),
           GestureDetector(onTap: () => setState(() => _remarquesExpanded = !_remarquesExpanded), child: Row(children: [Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(6), border: Border.all(color: const Color(0xFFFDE68A))), child: Row(mainAxisSize: MainAxisSize.min, children: [const Icon(LucideIcons.messageSquare, size: 11, color: Color(0xFFD97706)), const SizedBox(width: 4), const Text('Remarques', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFFD97706)))])), const SizedBox(width: 6), Icon(_remarquesExpanded ? LucideIcons.chevronUp : LucideIcons.chevronDown, size: 13, color: const Color(0xFFD97706))])),
           if (_remarquesExpanded) ...[const SizedBox(height: 8), Container(width: double.infinity, padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFFDE68A))), child: Text(tache.remarques, style: const TextStyle(fontSize: 12, color: kTextMain, height: 1.5)))],
+        ],
+        if (widget.assignedMembres.isNotEmpty) ...[
+          const SizedBox(height: 10), const Divider(height: 1, color: Color(0xFFF3F4F6)), const SizedBox(height: 8),
+          Row(children: [
+            const Icon(LucideIcons.users, size: 12, color: kTextSub),
+            const SizedBox(width: 6),
+            Expanded(child: Wrap(spacing: 4, runSpacing: 4, children: [
+              ...widget.assignedMembres.take(3).map((nom) => Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                decoration: BoxDecoration(color: kAccent.withOpacity(0.08), borderRadius: BorderRadius.circular(10)),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  CircleAvatar(radius: 7, backgroundColor: kAccent.withOpacity(0.2), child: Text(nom.isNotEmpty ? nom[0].toUpperCase() : '?', style: const TextStyle(fontSize: 8, color: kAccent, fontWeight: FontWeight.w700))),
+                  const SizedBox(width: 4),
+                  Text(nom, style: const TextStyle(fontSize: 11, color: kAccent, fontWeight: FontWeight.w500)),
+                ]),
+              )),
+              if (widget.assignedMembres.length > 3)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(10)),
+                  child: Text('+${widget.assignedMembres.length - 3}', style: const TextStyle(fontSize: 11, color: kTextSub, fontWeight: FontWeight.w600)),
+                ),
+            ])),
+          ]),
         ],
       ])),
     );

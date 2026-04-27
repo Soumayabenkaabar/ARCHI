@@ -41,7 +41,7 @@ class TacheService {
     }
   }
 
-  static Future<void> addTache(Tache tache) async {
+  static Future<String> addTache(Tache tache) async {
     final payload = <String, dynamic>{
       'projet_id':     tache.projetId,
       'titre':         tache.titre,
@@ -56,7 +56,8 @@ class TacheService {
     if (tache.phaseId != null && tache.phaseId!.isNotEmpty) {
       payload['phase_id'] = tache.phaseId;
     }
-    await _db.from('taches').insert(payload);
+    final result = await _db.from('taches').insert(payload).select('id').single();
+    return result['id'] as String;
   }
 
   static Future<void> updateTache(Tache tache) async {
