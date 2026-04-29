@@ -277,9 +277,6 @@ class _ClientsScreenState extends State<ClientsScreen> {
                                             telephone: telController.text.trim().isNotEmpty
                                                 ? telController.text.trim()
                                                 : clientToEdit?.telephone ?? '',
-                                            nbProjets: clientToEdit?.nbProjets ?? 0,
-                                            dateDepuis: clientToEdit?.dateDepuis ??
-                                                DateTime.now().year.toString(),
                                             accesPortail: accesPortail,
                                           );
 
@@ -487,9 +484,6 @@ class _ClientsScreenState extends State<ClientsScreen> {
                                     fontWeight: FontWeight.w700,
                                     fontSize: 15,
                                     color: kTextMain)),
-                            if (client.entreprise.isNotEmpty)
-                              Text(client.entreprise,
-                                  style: const TextStyle(color: kTextSub, fontSize: 12)),
                           ],
                         ),
                       ),
@@ -525,7 +519,7 @@ class _ClientsScreenState extends State<ClientsScreen> {
                       _InfoRow(
                         icon: LucideIcons.briefcase,
                         label: 'Projets',
-                        value: '${stats?.total ?? client.nbProjets} projet(s)',
+                        value: '${stats?.total ?? 0} projet(s)',
                       ),
                       if (stats != null && stats.total > 0) ...[
                         const SizedBox(height: 8),

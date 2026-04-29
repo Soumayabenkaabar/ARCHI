@@ -231,14 +231,14 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
     final descCtrl = TextEditingController();
     final localisationCtrl = TextEditingController();
     final budgetCtrl = TextEditingController();
-    final dateDebutCtrl = TextEditingController();
-    final dateFinCtrl = TextEditingController();
 
     String statut = 'En cours';
     String? selectedClientId;
     String? selectedChef;
     bool isSaving = false;
     LatLng? selectedPosition;
+    DateTime? pickedDebut;
+    DateTime? pickedFin;
 
     if (!mounted) return;
 
@@ -416,20 +416,20 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
                           Row(
                             children: [
                               Expanded(
-                                child: _ProjetField(
+                                child: _DatePickerField(
                                   icon: LucideIcons.calendarDays,
                                   label: 'DATE DÉBUT',
-                                  hint: 'Jan 2025',
-                                  controller: dateDebutCtrl,
+                                  value: pickedDebut,
+                                  onPicked: (d) => sd(() => pickedDebut = d),
                                 ),
                               ),
                               const SizedBox(width: 12),
                               Expanded(
-                                child: _ProjetField(
+                                child: _DatePickerField(
                                   icon: LucideIcons.calendarCheck,
                                   label: 'DATE FIN',
-                                  hint: 'Déc 2025',
-                                  controller: dateFinCtrl,
+                                  value: pickedFin,
+                                  onPicked: (d) => sd(() => pickedFin = d),
                                 ),
                               ),
                             ],
@@ -627,14 +627,12 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
                                           description: descCtrl.text.trim(),
                                           statut: statutDb,
                                           avancement: 0,
-                                          dateDebut:
-                                              dateDebutCtrl.text.trim().isEmpty
+                                          dateDebut: pickedDebut == null
                                               ? null
-                                              : dateDebutCtrl.text.trim(),
-                                          dateFin:
-                                              dateFinCtrl.text.trim().isEmpty
+                                              : '${pickedDebut!.year}-${pickedDebut!.month.toString().padLeft(2,'0')}-${pickedDebut!.day.toString().padLeft(2,'0')}',
+                                          dateFin: pickedFin == null
                                               ? null
-                                              : dateFinCtrl.text.trim(),
+                                              : '${pickedFin!.year}-${pickedFin!.month.toString().padLeft(2,'0')}-${pickedFin!.day.toString().padLeft(2,'0')}',
                                           budgetTotal:
                                               double.tryParse(
                                                 budgetCtrl.text.replaceAll(
@@ -1228,6 +1226,66 @@ class _StatData {
   final IconData icon;
   final Color color;
   const _StatData(this.label, this.value, this.icon, this.color);
+}
+
+class _DatePickerField extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final DateTime? value;
+  final ValueChanged<DateTime?> onPicked;
+
+  const _DatePickerField({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.onPicked,
+  });
+
+  String _display() {
+    if (value == null) return 'Choisir une date';
+    return '${value!.day.toString().padLeft(2, '0')}/${value!.month.toString().padLeft(2, '0')}/${value!.year}';
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        label,
+        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5),
+      ),
+      const SizedBox(height: 6),
+      GestureDetector(
+        onTap: () async {
+          final picked = await showDatePicker(
+            context: context,
+            initialDate: value ?? DateTime.now(),
+            firstDate: DateTime(2000),
+            lastDate: DateTime(2100),
+          );
+          if (picked != null) onPicked(picked);
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0xFFE5E7EB)),
+          ),
+          child: Row(children: [
+            Icon(icon, size: 14, color: kTextSub),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _display(),
+                style: TextStyle(fontSize: 13, color: value == null ? kTextSub : kTextMain),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    ],
+  );
 }
 
 // ── Champ localisation avec sélecteur carte ───────────────────────────────────

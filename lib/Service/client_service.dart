@@ -42,35 +42,77 @@ class ClientService {
     }
   }
 
-  // ─── ADD CLIENT ─────────────────────
-// Dans ClientService.addClient(), après l'insert :
+// Dans client_service.dart — remplace toute la méthode addClient
+
 static Future<void> addClient(Client client) async {
   try {
     final json = Map<String, dynamic>.from(client.toJson());
-    json['user_id'] = AuthService.currentUser?.id;
+    final uid = AuthService.currentUser?.id;
+    json['user_id'] = uid;
     await _db.from('clients').insert(json);
 
     if (client.accesPortail == true && client.email.isNotEmpty) {
-      // 1. Envoie l'invitation Supabase Auth (Edge Function)
+      // 1. Envoie l'invitation Supabase Auth
       await _inviteClient(client.email, client.nom);
 
-      // 2. Crée la ligne dans client_portal_access
-      // ⚠️ Il faut le projet_id — à passer en paramètre ou récupérer après
-      // Pour l'instant on crée sans projet, à lier manuellement
-      final existing = await _db
-          .from('client_portal_access')
+      final trimEmail = client.email.trim().toLowerCase();
+
+      // 2. Cherche un projet existant lié à ce client (par nom ou email)
+      String? projetId;
+
+      // Tentative par nom du client
+      final byNom = await _db
+          .from('projets')
           .select('id')
-          .eq('client_email', client.email.trim().toLowerCase())
+          .ilike('client', client.nom.trim())
+          .eq('portail_client', true)
+          .eq('user_id', uid ?? '')
           .limit(1);
 
-      if (existing.isEmpty) {
+      if ((byNom as List).isNotEmpty) {
+        projetId = byNom.first['id'] as String;
+      }
+
+      // Tentative par email si pas trouvé par nom
+      if (projetId == null) {
+        final byEmail = await _db
+            .from('projets')
+            .select('id')
+            .ilike('client', trimEmail)
+            .eq('portail_client', true)
+            .eq('user_id', uid ?? '')
+            .limit(1);
+
+        if ((byEmail as List).isNotEmpty) {
+          projetId = byEmail.first['id'] as String;
+        }
+      }
+
+      // 3. Vérifie si un accès existe déjà
+      final existing = await _db
+          .from('client_portal_access')
+          .select('id, projet_id')
+          .eq('client_email', trimEmail)
+          .limit(1);
+
+      if ((existing as List).isEmpty) {
+        // Crée le nouvel accès avec projet_id si trouvé
         await _db.from('client_portal_access').insert({
-          'client_nom':   client.nom,
-          'client_email': client.email.trim().toLowerCase(),
+          'client_nom':    client.nom,
+          'client_email':  trimEmail,
           'password_hash': '',
-          'actif': client.accesPortail,
-          'projet_id': null, // à lier manuellement au projet
+          'actif':         client.accesPortail,
+          'projet_id':     projetId, // null si aucun projet trouvé
         });
+      } else {
+        // Accès existant — met à jour projet_id si null
+        final existingProjetId = existing.first['projet_id'];
+        if (existingProjetId == null && projetId != null) {
+          await _db
+              .from('client_portal_access')
+              .update({'projet_id': projetId, 'actif': true})
+              .eq('id', existing.first['id']);
+        }
       }
     }
   } catch (e) {
@@ -78,23 +120,56 @@ static Future<void> addClient(Client client) async {
     rethrow;
   }
 }
-
-  // ─── UPDATE CLIENT ──────────────────
+  // ─── UPDATE CLIENT ───────────
   static Future<void> updateClient(Client client) async {
-    try {
-      if (client.id.isEmpty) throw Exception("ID client invalide");
+  try {
+    if (client.id.isEmpty) throw Exception("ID client invalide");
+    await _db
+        .from('clients')
+        .update(client.toJson())
+        .eq('id', client.id);
+  } catch (e) {
+    debugPrint("ERROR UPDATE CLIENT: $e");
+    rethrow;
+  }
+}
+  // Dans projet_service.dart — dans updatePortailClient, après le update DB :
 
-      await _db
-          .from('clients')
-          .update(client.toJson())
-          .eq('id', client.id);
+static Future<void> updatePortailClient(String projetId, bool value) async {
+  await _db
+      .from('projets')
+      .update({'portail_client': value})
+      .eq('id', projetId);
 
-    } catch (e) {
-      debugPrint("ERROR UPDATE CLIENT: $e");
-      rethrow;
+  // Si on active le portail, lie automatiquement l'accès existant
+  if (value) {
+    final projet = await _db
+        .from('projets')
+        .select('client, user_id')
+        .eq('id', projetId)
+        .single();
+
+    final clientNom = (projet['client'] as String? ?? '').trim();
+    if (clientNom.isNotEmpty) {
+      // Cherche un accès sans projet_id pour ce nom de client
+     final accesAll = await _db
+    .from('client_portal_access')
+    .select('id, projet_id')
+    .ilike('client_nom', clientNom);
+
+final acces = (accesAll as List)
+    .where((a) => a['projet_id'] == null)
+    .toList();
+
+      if ((acces as List).isNotEmpty) {
+        await _db
+            .from('client_portal_access')
+            .update({'projet_id': projetId})
+            .eq('id', acces.first['id']);
+      }
     }
   }
-
+}
   // ─── DELETE CLIENT ──────────────────
   static Future<void> deleteClient(String id) async {
     try {

@@ -42,8 +42,13 @@ class _EquipeScreenState extends State<EquipeScreen> {
   Map<String, List<Map<String, dynamic>>> _tachesParMembre = {};
   List<Conge>   _tousLesConges  = [];
   List<Project> _tousLesProjets = [];
-  bool isLoading = true;
+  bool isLoading    = true;
   String searchQuery = '';
+
+  // Section collapse state (mobile)
+  bool _tableVisible  = true;
+  bool _ganttVisible  = true;
+  bool _listVisible   = true;
 
   @override
   void initState() {
@@ -125,11 +130,25 @@ class _EquipeScreenState extends State<EquipeScreen> {
       return const Center(child: CircularProgressIndicator(color: kAccent));
 
     final filtered    = membres.where((m) => m.nom.toLowerCase().contains(searchQuery.toLowerCase())).toList();
+    final nbActifs    = filtered.where((m) => !m.disponible).length;
+    final nbDispos    = filtered.where((m) =>  m.disponible).length;
+    final nbConges    = _membresEnConge.length;
+
+    // ── KPI cards helper ──────────────────────────────────────────────────
+    Widget kpiRow(List<Widget> cards) => IntrinsicHeight(
+      child: Row(crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: cards.expand((c) => [c, const SizedBox(width: 10)]).toList()
+            ..removeLast()),
+    );
+    final kpi1 = _StatCard(title: 'Total',       value: '${filtered.length}', icon: LucideIcons.users,       color: kAccent);
+    final kpi2 = _StatCard(title: 'En activité', value: '$nbActifs',           icon: LucideIcons.activity,    color: const Color(0xFFD97706));
+    final kpi3 = _StatCard(title: 'Disponibles', value: '$nbDispos',           icon: LucideIcons.checkCircle, color: const Color(0xFF10B981));
+    final kpi4 = _StatCard(title: 'En congé',    value: '$nbConges',           icon: LucideIcons.umbrella,    color: const Color(0xFFF97316));
 
     return Container(
       color: kBg,
       child: SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(pad, pad, pad, pad + 20),
+        padding: EdgeInsets.fromLTRB(pad, pad, pad, pad + 32),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -138,8 +157,8 @@ class _EquipeScreenState extends State<EquipeScreen> {
               Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text('Gestion de l\'équipe',
-                      style: TextStyle(fontSize: isMobile ? 22 : 28, fontWeight: FontWeight.w800, color: kTextMain)),
-                  const SizedBox(height: 4),
+                      style: TextStyle(fontSize: isMobile ? 20 : 28, fontWeight: FontWeight.w800, color: kTextMain)),
+                  const SizedBox(height: 3),
                   Text('Gérez votre équipe et leurs assignations',
                       style: TextStyle(color: kTextSub, fontSize: isMobile ? 12 : 14)),
                 ]),
@@ -149,20 +168,20 @@ class _EquipeScreenState extends State<EquipeScreen> {
                 onPressed: showAddMembreDialog,
                 icon: const Icon(LucideIcons.userPlus, size: 15, color: Colors.white),
                 label: Text(isMobile ? 'Ajouter' : 'Ajouter un membre',
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: kAccent, elevation: 0,
-                  padding: EdgeInsets.symmetric(horizontal: isMobile ? 12 : 18, vertical: isMobile ? 10 : 14),
+                  padding: EdgeInsets.symmetric(horizontal: isMobile ? 12 : 18, vertical: isMobile ? 10 : 13),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
               ),
             ]),
 
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
 
             // ── Recherche ──────────────────────────────────────────────────
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 14),
               decoration: BoxDecoration(
                 color: kCardBg,
                 borderRadius: BorderRadius.circular(12),
@@ -171,74 +190,103 @@ class _EquipeScreenState extends State<EquipeScreen> {
               child: TextField(
                 controller: searchController,
                 onChanged: (v) => setState(() => searchQuery = v),
+                style: const TextStyle(fontSize: 14),
                 decoration: const InputDecoration(
-                  icon: Icon(LucideIcons.search, size: 18, color: kTextSub),
+                  icon: Icon(LucideIcons.search, size: 17, color: kTextSub),
                   hintText: 'Rechercher un membre...',
-                  hintStyle: TextStyle(color: kTextSub),
+                  hintStyle: TextStyle(color: kTextSub, fontSize: 13),
                   border: InputBorder.none,
+                  contentPadding: EdgeInsets.symmetric(vertical: 13),
                 ),
               ),
             ),
 
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
 
-            // ── KPI cards ─────────────────────────────────────────────────
-            IntrinsicHeight(
-              child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                Expanded(child: _StatCard(title: 'Total',       value: '${filtered.length}',       icon: LucideIcons.users,       color: kAccent)),
-                const SizedBox(width: 10),
-                Expanded(child: _StatCard(title: 'Membres',     value: '${filtered.length}',         icon: LucideIcons.users,       color: const Color(0xFFD97706))),
-                const SizedBox(width: 10),
-                const SizedBox(width: 10),
-                Expanded(child: _StatCard(title: 'En congé',    value: '${_membresEnConge.length}', icon: LucideIcons.umbrella,    color: const Color(0xFFF97316))),
-              ]),
-            ),
+            // ── KPI cards (1×4 desktop / 2×2 mobile) ──────────────────────
+            if (isMobile) ...[
+              kpiRow([Expanded(child: kpi1), Expanded(child: kpi2)]),
+              const SizedBox(height: 10),
+              kpiRow([Expanded(child: kpi3), Expanded(child: kpi4)]),
+            ] else
+              kpiRow([Expanded(child: kpi1), Expanded(child: kpi2), Expanded(child: kpi3), Expanded(child: kpi4)]),
 
             const SizedBox(height: 24),
 
             // ── Tableau de synthèse ────────────────────────────────────────
-            _SectionTitle(icon: LucideIcons.table2, color: kAccent, label: 'Tableau de synthèse'),
-            const SizedBox(height: 14),
-            _EquipeTable(membres: filtered, membresEnConge: _membresEnConge, tachesParMembre: _tachesParMembre, projets: _tousLesProjets),
-
-            const SizedBox(height: 24),
-
-            // ── Gantt ──────────────────────────────────────────────────────
-            _SectionTitle(icon: LucideIcons.calendar, color: kAccent, label: 'Planning de l\'équipe'),
-            const SizedBox(height: 14),
-            _GanttView(membres: filtered, tachesParMembre: _tachesParMembre, tousLesConges: _tousLesConges, projets: _tousLesProjets),
-
-            const SizedBox(height: 24),
-
-            // ── Tous les membres ──────────────────────────────────────────
-            if (filtered.isNotEmpty) ...[
-              _SectionTitle(icon: LucideIcons.users,     color: kAccent, label: 'Membres de l\'équipe'),
+            _SectionTitle(
+              icon: LucideIcons.table2,
+              color: kAccent,
+              label: 'Tableau de synthèse',
+              isExpanded: _tableVisible,
+              onToggle: isMobile ? () => setState(() => _tableVisible = !_tableVisible) : null,
+            ),
+            if (_tableVisible) ...[
               const SizedBox(height: 14),
-              ...filtered.map((m) => Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: MembreActifRow(
-                  membre: m,
-                  isEnConge: _membresEnConge.contains(m.id),
-                  onView:   () => showViewDialog(context, m),
-                  onEdit:   () => showEditDialog(context, m, loadMembres),
-                  onConge:  () => showCongeDialog(context, m, loadMembres),
-                  onDelete: () async {
-                    if (m.id == null) return;
-                    await MembreService.deleteMembre(m.id!);
-                    _showSnack(context, 'Membre supprimé', kRed);
-                    loadMembres();
-                  },
-                ),
-              )),
+              if (isMobile) _MobileScrollHint(child:
+                _EquipeTable(membres: filtered, membresEnConge: _membresEnConge, tachesParMembre: _tachesParMembre, projets: _tousLesProjets),
+              ) else
+                _EquipeTable(membres: filtered, membresEnConge: _membresEnConge, tachesParMembre: _tachesParMembre, projets: _tousLesProjets),
+            ],
+
+            const SizedBox(height: 24),
+
+            // ── Planning Gantt ─────────────────────────────────────────────
+            _SectionTitle(
+              icon: LucideIcons.calendar,
+              color: kAccent,
+              label: 'Planning de l\'équipe',
+              isExpanded: _ganttVisible,
+              onToggle: isMobile ? () => setState(() => _ganttVisible = !_ganttVisible) : null,
+            ),
+            if (_ganttVisible) ...[
+              const SizedBox(height: 14),
+              _GanttView(
+                membres: filtered,
+                tachesParMembre: _tachesParMembre,
+                tousLesConges: _tousLesConges,
+                projets: _tousLesProjets,
+              ),
+            ],
+
+            const SizedBox(height: 24),
+
+            // ── Membres de l'équipe ────────────────────────────────────────
+            if (filtered.isNotEmpty) ...[
+              _SectionTitle(
+                icon: LucideIcons.users,
+                color: kAccent,
+                label: 'Membres de l\'équipe',
+                isExpanded: _listVisible,
+                onToggle: isMobile ? () => setState(() => _listVisible = !_listVisible) : null,
+              ),
+              if (_listVisible) ...[
+                const SizedBox(height: 14),
+                ...filtered.map((m) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: MembreActifRow(
+                    membre: m,
+                    isEnConge: _membresEnConge.contains(m.id),
+                    onView:   () => showViewDialog(context, m),
+                    onEdit:   () => showEditDialog(context, m, loadMembres),
+                    onConge:  () => showCongeDialog(context, m, loadMembres),
+                    onDelete: () async {
+                      await MembreService.deleteMembre(m.id);
+                      if (context.mounted) _showSnack(context, 'Membre supprimé', kRed);
+                      loadMembres();
+                    },
+                  ),
+                )),
+              ],
             ],
 
             if (filtered.isEmpty)
-              Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 40),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 48),
+                child: Center(
                   child: Column(children: const [
-                    Icon(LucideIcons.users, size: 40, color: kTextSub),
-                    SizedBox(height: 12),
+                    Icon(LucideIcons.users, size: 44, color: kTextSub),
+                    SizedBox(height: 14),
                     Text('Aucun membre trouvé',
                         style: TextStyle(color: kTextSub, fontSize: 15, fontWeight: FontWeight.w500)),
                   ]),
@@ -693,17 +741,70 @@ class _InfoTile extends StatelessWidget {
 }
 
 class _SectionTitle extends StatelessWidget {
-  final IconData icon;
-  final Color color;
-  final String label;
-  const _SectionTitle({required this.icon, required this.color, required this.label});
+  final IconData      icon;
+  final Color         color;
+  final String        label;
+  final bool?         isExpanded;
+  final VoidCallback? onToggle;
+
+  const _SectionTitle({
+    required this.icon,
+    required this.color,
+    required this.label,
+    this.isExpanded,
+    this.onToggle,
+  });
 
   @override
-  Widget build(BuildContext context) => Row(children: [
-    Icon(icon, color: color, size: 18),
-    const SizedBox(width: 8),
-    Text(label, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: kTextMain)),
-  ]);
+  Widget build(BuildContext context) {
+    final row = Row(children: [
+      Container(
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
+        child: Icon(icon, color: color, size: 15),
+      ),
+      const SizedBox(width: 10),
+      Expanded(
+        child: Text(label,
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: kTextMain)),
+      ),
+      if (onToggle != null) ...[
+        const SizedBox(width: 8),
+        AnimatedRotation(
+          turns: (isExpanded ?? true) ? 0.25 : 0,
+          duration: const Duration(milliseconds: 200),
+          child: const Icon(LucideIcons.chevronRight, size: 16, color: kTextSub),
+        ),
+      ],
+    ]);
+
+    if (onToggle == null) return row;
+    return InkWell(
+      onTap: onToggle,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: row),
+    );
+  }
+}
+
+// Wraps a scrollable widget and shows a "swipe" hint on mobile.
+class _MobileScrollHint extends StatelessWidget {
+  final Widget child;
+  const _MobileScrollHint({required this.child});
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      child,
+      const SizedBox(height: 6),
+      Row(mainAxisAlignment: MainAxisAlignment.center, children: const [
+        Icon(LucideIcons.moveHorizontal, size: 11, color: kTextSub),
+        SizedBox(width: 5),
+        Text('Glisser pour voir plus', style: TextStyle(fontSize: 10, color: kTextSub)),
+      ]),
+    ],
+  );
 }
 
 class _StatCard extends StatelessWidget {
@@ -1464,7 +1565,9 @@ class _GanttView extends StatefulWidget {
 
 class _GanttViewState extends State<_GanttView> {
   final _scroll = ScrollController();
-  static const double _dayW = 26.0, _rowH = 60.0, _headerH = 44.0, _leftW = 182.0;
+  // _dayW is resolved from screen width in build(); other dims are fixed.
+  double _dayW = 26.0;
+  static const double _rowH = 54.0, _headerH = 42.0, _leftW = 164.0;
   late DateTime _start, _end;
   late int _totalDays;
   late Map<String, List<Conge>> _congesParMembre;
@@ -1514,6 +1617,10 @@ class _GanttViewState extends State<_GanttView> {
   @override
   Widget build(BuildContext context) {
     if (widget.membres.isEmpty) return const SizedBox.shrink();
+    // Adaptive day width: narrower on small screens for better readability.
+    final sw = MediaQuery.of(context).size.width;
+    _dayW = sw < 480 ? 18.0 : sw < 700 ? 21.0 : sw < 1000 ? 24.0 : 26.0;
+
     return Container(
       decoration: BoxDecoration(
         color: kCardBg, borderRadius: BorderRadius.circular(12),

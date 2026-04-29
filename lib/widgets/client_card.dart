@@ -22,7 +22,7 @@ class ClientCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = stats;
-    final totalProjets = s?.total ?? client.nbProjets;
+    final totalProjets = s?.total ?? 0;
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -55,10 +55,6 @@ class ClientCard extends StatelessWidget {
                 style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: kTextMain),
                 maxLines: 1, overflow: TextOverflow.ellipsis,
               ),
-              if (client.entreprise.isNotEmpty)
-                Text(client.entreprise,
-                    style: const TextStyle(color: kTextSub, fontSize: 12),
-                    maxLines: 1, overflow: TextOverflow.ellipsis),
             ])),
             // Badge portail
             _PortailBadge(actif: client.accesPortail),

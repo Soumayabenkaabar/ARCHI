@@ -279,16 +279,43 @@ class _MobileActifLayout extends StatelessWidget {
             Text('En congé', style: TextStyle(color: Color(0xFFF97316), fontSize: 11, fontWeight: FontWeight.w700)),
           ]),
         ),
-      const SizedBox(height: 10),
+      const SizedBox(height: 12),
+
+      // ── Consulter (pleine largeur, action principale) ─────────────────
+      SizedBox(
+        width: double.infinity,
+        child: ElevatedButton.icon(
+          onPressed: onView,
+          icon: const Icon(LucideIcons.eye, size: 14, color: Colors.white),
+          label: const Text('Consulter le profil',
+              style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: kAccent,
+            elevation: 0,
+            padding: const EdgeInsets.symmetric(vertical: 11),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+          ),
+        ),
+      ),
+
+      const SizedBox(height: 8),
+
+      // ── Actions secondaires ────────────────────────────────────────────
       Row(children: [
         Expanded(
           child: OutlinedButton.icon(
             onPressed: onConge,
-            icon: Icon(LucideIcons.umbrella, size: 13, color: isEnConge ? const Color(0xFFF97316) : kTextSub),
-            label: Text('Congés', style: TextStyle(color: isEnConge ? const Color(0xFFF97316) : kTextSub, fontSize: 12)),
+            icon: Icon(LucideIcons.umbrella, size: 13,
+                color: isEnConge ? const Color(0xFFF97316) : kTextSub),
+            label: Text('Congés',
+                style: TextStyle(
+                    color: isEnConge ? const Color(0xFFF97316) : kTextSub, fontSize: 12)),
             style: OutlinedButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: 8),
-              side: BorderSide(color: isEnConge ? const Color(0xFFF97316).withOpacity(0.5) : const Color(0xFFE0E0E0)),
+              side: BorderSide(
+                  color: isEnConge
+                      ? const Color(0xFFF97316).withOpacity(0.5)
+                      : const Color(0xFFE0E0E0)),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
           ),
@@ -298,7 +325,8 @@ class _MobileActifLayout extends StatelessWidget {
           child: OutlinedButton.icon(
             onPressed: onEdit,
             icon: const Icon(LucideIcons.pencil, size: 13, color: kTextMain),
-            label: const Text('Modifier', style: TextStyle(color: kTextMain, fontSize: 12)),
+            label: const Text('Modifier',
+                style: TextStyle(color: kTextMain, fontSize: 12)),
             style: OutlinedButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: 8),
               side: const BorderSide(color: Color(0xFFE0E0E0)),
@@ -311,7 +339,8 @@ class _MobileActifLayout extends StatelessWidget {
           child: OutlinedButton.icon(
             onPressed: onDelete,
             icon: const Icon(LucideIcons.trash2, size: 13, color: kRed),
-            label: const Text('Supprimer', style: TextStyle(color: kRed, fontSize: 12)),
+            label: const Text('Supprimer',
+                style: TextStyle(color: kRed, fontSize: 12)),
             style: OutlinedButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: 8),
               side: const BorderSide(color: Color(0xFFE0E0E0)),

@@ -18,17 +18,13 @@ class ClientStats {
 /// Modèle Client — table `clients`
 ///
 /// Colonnes BDD :
-///   id, user_id, nom, email, telephone, entreprise,
-///   nb_projets, date_depuis, acces_portail, created_at
+///   id, user_id, nom, email, telephone, acces_portail, created_at
 class Client {
   final String id;
   final String? userId;
   final String nom;
   final String email;
   final String telephone;
-  final String entreprise;
-  final int nbProjets;
-  final String dateDepuis;
   final bool accesPortail;
   final DateTime? createdAt;
 
@@ -38,9 +34,6 @@ class Client {
     required this.nom,
     this.email = '',
     this.telephone = '',
-    this.entreprise = '',
-    this.nbProjets = 0,
-    this.dateDepuis = '',
     this.accesPortail = true,
     this.createdAt,
   });
@@ -52,7 +45,7 @@ class Client {
                       'jul', 'aoû', 'sep', 'oct', 'nov', 'déc'];
       return '${d.day.toString().padLeft(2, '0')} ${months[d.month - 1]} ${d.year}';
     }
-    return dateDepuis.isNotEmpty ? dateDepuis : '—';
+    return '—';
   }
 
   factory Client.fromJson(Map<String, dynamic> json) => Client(
@@ -61,9 +54,6 @@ class Client {
     nom:          json['nom'] ?? '',
     email:        json['email'] ?? '',
     telephone:    json['telephone'] ?? '',
-    entreprise:   json['entreprise'] ?? '',
-    nbProjets:    (json['nb_projets'] as num?)?.toInt() ?? 0,
-    dateDepuis:   json['date_depuis']?.toString() ?? '',
     accesPortail: json['acces_portail'] ?? true,
     createdAt:    json['created_at'] != null
                     ? DateTime.tryParse(json['created_at'].toString())
@@ -71,10 +61,9 @@ class Client {
   );
 
   Map<String, dynamic> toJson() => {
-    'nom': nom,
-    'email': email,
-    'telephone': telephone,
-    'entreprise': entreprise,
+    'nom':           nom,
+    'email':         email,
+    'telephone':     telephone,
     'acces_portail': accesPortail,
   };
 }
