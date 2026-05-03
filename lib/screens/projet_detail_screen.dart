@@ -177,6 +177,10 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
   int _commentCount = 0;
   late Project _project;
   bool _updatingStatut = false;
+  int _tachesTotal = 0;
+  int _tachesTerminees = 0;
+  bool _loadingProgression = true;
+  RealtimeChannel? _realtimeChannel;
 
   @override
   void initState() {
@@ -184,6 +188,72 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
     _project = widget.project;
     _tabController = TabController(length: _tabCount, vsync: this);
     _loadCommentCount();
+    _loadProgression();
+    _subscribeRealtime();
+  }
+
+  void _subscribeRealtime() {
+    final pid = _project.id;
+    _realtimeChannel = Supabase.instance.client
+      .channel('projet-header-$pid')
+      .onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'taches',
+        filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'projet_id', value: pid),
+        callback: (_) { if (mounted) _loadProgression(); },
+      )
+      .onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'commentaires',
+        filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'projet_id', value: pid),
+        callback: (_) { if (mounted) _loadCommentCount(); },
+      )
+      .subscribe();
+  }
+
+  Future<void> _loadProgression() async {
+    try {
+      final taches = await TacheService.getTaches(_project.id);
+      if (!mounted) return;
+
+      final total      = taches.length;
+      final terminees  = taches.where((t) => t.statut == 'termine').length;
+      final avancement = total == 0 ? 0 : ((terminees / total) * 100).round();
+      final budgetDepense = taches.fold<double>(0.0, (sum, t) {
+        final factor = t.statut == 'termine'  ? 1.0
+                     : t.statut == 'en_cours' ? 0.5
+                     : 0.0;
+        return sum + t.budgetEstime * factor;
+      });
+
+      await Future.wait([
+        ProjetService.updateAvancement(_project.id, avancement),
+        ProjetService.updateBudgetDepense(_project.id, budgetDepense),
+      ]);
+
+      if (!mounted) return;
+      setState(() {
+        _tachesTotal     = total;
+        _tachesTerminees = terminees;
+        _loadingProgression = false;
+        _project = Project(
+          id: _project.id, clientId: _project.clientId,
+          titre: _project.titre, description: _project.description,
+          statut: _project.statut, avancement: avancement,
+          dateDebut: _project.dateDebut, dateFin: _project.dateFin,
+          budgetTotal: _project.budgetTotal, budgetDepense: budgetDepense,
+          client: _project.client, localisation: _project.localisation,
+          chef: _project.chef, taches: _project.taches,
+          membres: _project.membres, docs: _project.docs,
+          portailClient: _project.portailClient,
+          latitude: _project.latitude, longitude: _project.longitude,
+        );
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loadingProgression = false);
+    }
   }
 
   Color get _statusColor {
@@ -196,6 +266,7 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
   }
 
   Future<void> _terminerProjet() async {
+    final portailActif = _project.portailClient;
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -205,7 +276,11 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
           SizedBox(width: 10),
           Text('Terminer le projet ?'),
         ]),
-        content: Text('Le projet "${_project.titre}" sera marqué comme terminé.'),
+        content: Text(
+          portailActif
+              ? 'Le projet "${_project.titre}" sera marqué comme terminé et le portail client sera automatiquement désactivé.'
+              : 'Le projet "${_project.titre}" sera marqué comme terminé.',
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Annuler')),
           ElevatedButton(
@@ -220,7 +295,8 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
     setState(() => _updatingStatut = true);
     try {
       await ProjetService.updateStatutProjet(_project.id, 'termine');
-      setState(() { _project = Project(id: _project.id, clientId: _project.clientId, titre: _project.titre, description: _project.description, statut: 'termine', avancement: 100, dateDebut: _project.dateDebut, dateFin: _project.dateFin, budgetTotal: _project.budgetTotal, budgetDepense: _project.budgetDepense, client: _project.client, localisation: _project.localisation, chef: _project.chef, taches: _project.taches, membres: _project.membres, docs: _project.docs, portailClient: _project.portailClient); });
+      if (portailActif) await ProjetService.updatePortailClient(_project.id, false);
+      setState(() { _project = Project(id: _project.id, clientId: _project.clientId, titre: _project.titre, description: _project.description, statut: 'termine', avancement: 100, dateDebut: _project.dateDebut, dateFin: _project.dateFin, budgetTotal: _project.budgetTotal, budgetDepense: _project.budgetDepense, client: _project.client, localisation: _project.localisation, chef: _project.chef, taches: _project.taches, membres: _project.membres, docs: _project.docs, portailClient: false); });
       _snack(context, '✓ Projet marqué comme terminé', const Color(0xFF10B981));
     } catch (e) {
       _snack(context, 'Erreur : $e', kRed);
@@ -230,6 +306,7 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
   }
 
   Future<void> _annulerProjet() async {
+    final portailActif = _project.portailClient;
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -239,7 +316,11 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
           SizedBox(width: 10),
           Text('Annuler le projet ?'),
         ]),
-        content: Text('Le projet "${_project.titre}" sera marqué comme annulé. Cette action est réversible.'),
+        content: Text(
+          portailActif
+              ? 'Le projet "${_project.titre}" sera marqué comme annulé et le portail client sera automatiquement désactivé.'
+              : 'Le projet "${_project.titre}" sera marqué comme annulé. Cette action est réversible.',
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Retour')),
           ElevatedButton(
@@ -254,7 +335,8 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
     setState(() => _updatingStatut = true);
     try {
       await ProjetService.updateStatutProjet(_project.id, 'annule');
-      setState(() { _project = Project(id: _project.id, clientId: _project.clientId, titre: _project.titre, description: _project.description, statut: 'annule', avancement: _project.avancement, dateDebut: _project.dateDebut, dateFin: _project.dateFin, budgetTotal: _project.budgetTotal, budgetDepense: _project.budgetDepense, client: _project.client, localisation: _project.localisation, chef: _project.chef, taches: _project.taches, membres: _project.membres, docs: _project.docs, portailClient: _project.portailClient); });
+      if (portailActif) await ProjetService.updatePortailClient(_project.id, false);
+      setState(() { _project = Project(id: _project.id, clientId: _project.clientId, titre: _project.titre, description: _project.description, statut: 'annule', avancement: _project.avancement, dateDebut: _project.dateDebut, dateFin: _project.dateFin, budgetTotal: _project.budgetTotal, budgetDepense: _project.budgetDepense, client: _project.client, localisation: _project.localisation, chef: _project.chef, taches: _project.taches, membres: _project.membres, docs: _project.docs, portailClient: false); });
       _snack(context, 'Projet annulé', kRed);
     } catch (e) {
       _snack(context, 'Erreur : $e', kRed);
@@ -264,6 +346,10 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
   }
 
   Future<void> _togglePortailClient(bool value) async {
+    if (_project.statut == 'termine' || _project.statut == 'annule') {
+      _snack(context, 'Le portail client ne peut pas être modifié sur un projet terminé ou annulé', kTextSub);
+      return;
+    }
     setState(() { _project = Project(id: _project.id, clientId: _project.clientId, titre: _project.titre, description: _project.description, statut: _project.statut, avancement: _project.avancement, dateDebut: _project.dateDebut, dateFin: _project.dateFin, budgetTotal: _project.budgetTotal, budgetDepense: _project.budgetDepense, client: _project.client, localisation: _project.localisation, chef: _project.chef, taches: _project.taches, membres: _project.membres, docs: _project.docs, portailClient: value); });
     try {
       await ProjetService.updatePortailClient(_project.id, value);
@@ -489,13 +575,17 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
   }
 
   @override
-  void dispose() { _tabController.dispose(); super.dispose(); }
+  void dispose() {
+    _realtimeChannel?.unsubscribe();
+    _tabController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.of(context).size.width < 800;
     final pad = isMobile ? 16.0 : 28.0;
-    final p = widget.project;
+    final p = _project;
 
     final content = Scaffold(
       backgroundColor: kBg,
@@ -525,21 +615,56 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
                   const SizedBox(height: 10),
                   isMobile ? _buildMobileHeader(p) : _buildDesktopHeader(p),
                   const SizedBox(height: 10),
-                  _buildCompactInfoBar(p),
+                  _buildCompactInfoBar(p, isMobile),
                   const SizedBox(height: 12),
-                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                    const Text('Progression globale', style: TextStyle(color: kTextSub, fontSize: 12, fontWeight: FontWeight.w500)),
-                    Text('${p.avancement}%', style: const TextStyle(fontWeight: FontWeight.w700, color: kTextMain, fontSize: 12)),
-                  ]),
-                  const SizedBox(height: 5),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(5),
-                    child: LinearProgressIndicator(
-                      value: p.progress, minHeight: 6,
-                      backgroundColor: const Color(0xFFE5E7EB),
-                      valueColor: AlwaysStoppedAnimation<Color>(_statusColor),
-                    ),
-                  ),
+                  Builder(builder: (_) {
+                    final progValue = _tachesTotal == 0 ? 0.0 : _tachesTerminees / _tachesTotal;
+                    final progPct   = (progValue * 100).round();
+                    final budgetPct = (p.budgetProgress * 100).round();
+                    final budgetOver = p.budgetProgress >= 1.0;
+                    final budgetColor = budgetOver ? kRed : const Color(0xFF10B981);
+                    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      // — Progression tâches
+                      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                        const Text('Progression globale', style: TextStyle(color: kTextSub, fontSize: 12, fontWeight: FontWeight.w500)),
+                        _loadingProgression
+                            ? const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2, color: kAccent))
+                            : Text(
+                                '$progPct%  ($_tachesTerminees / $_tachesTotal tâches)',
+                                style: const TextStyle(fontWeight: FontWeight.w700, color: kTextMain, fontSize: 12),
+                              ),
+                      ]),
+                      const SizedBox(height: 5),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(5),
+                        child: LinearProgressIndicator(
+                          value: _loadingProgression ? 0.0 : progValue,
+                          minHeight: 6,
+                          backgroundColor: const Color(0xFFE5E7EB),
+                          valueColor: AlwaysStoppedAnimation<Color>(_statusColor),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      // — Avancement budget
+                      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                        const Text('Avancement budget', style: TextStyle(color: kTextSub, fontSize: 12, fontWeight: FontWeight.w500)),
+                        Text(
+                          '$budgetPct%  (${_fmt(p.budgetDepense)} / ${_fmt(p.budgetTotal)})',
+                          style: TextStyle(fontWeight: FontWeight.w700, color: budgetOver ? kRed : kTextMain, fontSize: 12),
+                        ),
+                      ]),
+                      const SizedBox(height: 5),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(5),
+                        child: LinearProgressIndicator(
+                          value: p.budgetProgress,
+                          minHeight: 6,
+                          backgroundColor: const Color(0xFFE5E7EB),
+                          valueColor: AlwaysStoppedAnimation<Color>(budgetColor),
+                        ),
+                      ),
+                    ]);
+                  }),
                   const SizedBox(height: 12),
                   TabBar(
                     controller: _tabController,
@@ -580,7 +705,7 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
         body: TabBarView(
           controller: _tabController,
           children: [
-            _TachesTab(project: widget.project),
+            _TachesTab(project: widget.project, onTasksChanged: _loadProgression),
             _FinancesTab(project: widget.project, fmt: _fmt),
             _SuiviPhotosTab(project: widget.project),
             _EquipeTab(project: widget.project),
@@ -627,7 +752,7 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
     Material(color: Colors.transparent, child: Row(children: [
       _AccessToggle(
         value: _project.portailClient,
-        onChanged: _updatingStatut ? null : _togglePortailClient,
+        onChanged: (_updatingStatut || _project.statut == 'termine' || _project.statut == 'annule') ? null : _togglePortailClient,
       ),
       const SizedBox(width: 10),
       if (_project.statut != 'termine') ...[
@@ -660,7 +785,7 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
     const SizedBox(width: 8),
     _AccessToggle(
       value: _project.portailClient,
-      onChanged: _updatingStatut ? null : _togglePortailClient,
+      onChanged: (_updatingStatut || _project.statut == 'termine' || _project.statut == 'annule') ? null : _togglePortailClient,
     ),
     PopupMenuButton<String>(
       icon: const Icon(LucideIcons.moreVertical, size: 18, color: kTextSub),
@@ -673,25 +798,51 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
     ),
   ]);
 
-  Widget _buildCompactInfoBar(Project p) => SingleChildScrollView(
-    scrollDirection: Axis.horizontal,
-    child: Row(children: [
-      Text('Client : ${p.client}', style: const TextStyle(color: kTextSub, fontSize: 11, fontWeight: FontWeight.w500)),
-      Container(margin: const EdgeInsets.symmetric(horizontal: 10), width: 1, height: 14, color: const Color(0xFFE5E7EB)),
-      _CompactChip(icon: LucideIcons.mapPin,     text: p.localisation.isEmpty ? '—' : p.localisation),
-      const SizedBox(width: 8),
-      _CompactChip(icon: LucideIcons.user,       text: p.chef.isEmpty ? '—' : p.chef),
-      const SizedBox(width: 8),
-      _CompactChip(icon: LucideIcons.calendar,   text: '${p.dateDebut ?? "—"} → ${p.dateFin ?? "—"}'),
-      const SizedBox(width: 8),
-      _CompactChip(icon: LucideIcons.dollarSign, text: '${_fmt(p.budgetDepense)} / ${_fmt(p.budgetTotal)}'),
-      const SizedBox(width: 6),
-      GestureDetector(
-        onTap: _editInfoProjet,
-        child: const Icon(LucideIcons.pencil, size: 13, color: kTextSub),
-      ),
-    ]),
-  );
+  Widget _buildCompactInfoBar(Project p, bool isMobile) {
+    if (isMobile) {
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Expanded(child: _MobileInfoTile(icon: LucideIcons.user,       label: 'Client',       value: p.client.isEmpty       ? '—' : p.client)),
+          const SizedBox(width: 8),
+          Expanded(child: _MobileInfoTile(icon: LucideIcons.mapPin,     label: 'Localisation', value: p.localisation.isEmpty  ? '—' : p.localisation)),
+        ]),
+        const SizedBox(height: 8),
+        Row(children: [
+          Expanded(child: _MobileInfoTile(icon: LucideIcons.calendar,   label: 'Période',      value: '${p.dateDebut ?? "—"} → ${p.dateFin ?? "—"}')),
+          const SizedBox(width: 8),
+          Expanded(child: _MobileInfoTile(icon: LucideIcons.dollarSign, label: 'Budget',       value: '${_fmt(p.budgetDepense)} / ${_fmt(p.budgetTotal)} DT')),
+        ]),
+        const SizedBox(height: 8),
+        GestureDetector(
+          onTap: _editInfoProjet,
+          child: const Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(LucideIcons.pencil, size: 12, color: kAccent),
+            SizedBox(width: 4),
+            Text('Modifier les infos', style: TextStyle(fontSize: 11, color: kAccent, fontWeight: FontWeight.w600)),
+          ]),
+        ),
+      ]);
+    }
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(children: [
+        Text('Client : ${p.client}', style: const TextStyle(color: kTextSub, fontSize: 11, fontWeight: FontWeight.w500)),
+        Container(margin: const EdgeInsets.symmetric(horizontal: 10), width: 1, height: 14, color: const Color(0xFFE5E7EB)),
+        _CompactChip(icon: LucideIcons.mapPin,     text: p.localisation.isEmpty ? '—' : p.localisation),
+        const SizedBox(width: 8),
+        _CompactChip(icon: LucideIcons.user,       text: p.chef.isEmpty ? '—' : p.chef),
+        const SizedBox(width: 8),
+        _CompactChip(icon: LucideIcons.calendar,   text: '${p.dateDebut ?? "—"} → ${p.dateFin ?? "—"}'),
+        const SizedBox(width: 8),
+        _CompactChip(icon: LucideIcons.dollarSign, text: '${_fmt(p.budgetDepense)} / ${_fmt(p.budgetTotal)}'),
+        const SizedBox(width: 6),
+        GestureDetector(
+          onTap: _editInfoProjet,
+          child: const Icon(LucideIcons.pencil, size: 13, color: kTextSub),
+        ),
+      ]),
+    );
+  }
 }
 
 class _CompactChip extends StatelessWidget {
@@ -705,12 +856,44 @@ class _CompactChip extends StatelessWidget {
   ]);
 }
 
+class _MobileInfoTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  const _MobileInfoTile({required this.icon, required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+    decoration: BoxDecoration(
+      color: const Color(0xFFF8F9FA),
+      borderRadius: BorderRadius.circular(10),
+      border: Border.all(color: const Color(0xFFEEEEEE)),
+    ),
+    child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Container(
+        margin: const EdgeInsets.only(top: 1),
+        padding: const EdgeInsets.all(5),
+        decoration: BoxDecoration(color: kAccent.withOpacity(0.10), borderRadius: BorderRadius.circular(6)),
+        child: Icon(icon, size: 11, color: kAccent),
+      ),
+      const SizedBox(width: 8),
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+        Text(label, style: const TextStyle(fontSize: 9, color: kTextSub, fontWeight: FontWeight.w600, letterSpacing: 0.4)),
+        const SizedBox(height: 2),
+        Text(value, style: const TextStyle(fontSize: 11, color: kTextMain, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis, maxLines: 2),
+      ])),
+    ]),
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  ONGLET TÂCHES
 // ══════════════════════════════════════════════════════════════════════════════
 class _TachesTab extends StatefulWidget {
   final Project project;
-  const _TachesTab({required this.project});
+  final VoidCallback? onTasksChanged;
+  const _TachesTab({required this.project, this.onTasksChanged});
   @override State<_TachesTab> createState() => _TachesTabState();
 }
 
@@ -724,8 +907,41 @@ class _TachesTabState extends State<_TachesTab> {
   Map<String, List<String>> _membresNomParTache = {};
   List<Membre> _tousLesMembres = [];
   Map<String, List<Conge>> _congesParMembre = {};
+  RealtimeChannel? _channel;
 
-  @override void initState() { super.initState(); _load(); }
+  @override
+  void initState() {
+    super.initState();
+    _load();
+    _subscribeRealtime();
+  }
+
+  @override
+  void dispose() {
+    _channel?.unsubscribe();
+    super.dispose();
+  }
+
+  void _subscribeRealtime() {
+    final pid = widget.project.id;
+    _channel = Supabase.instance.client
+      .channel('taches-phases-$pid')
+      .onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'taches',
+        filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'projet_id', value: pid),
+        callback: (_) { if (mounted) _load(); },
+      )
+      .onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'phases',
+        filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'projet_id', value: pid),
+        callback: (_) { if (mounted) _load(); },
+      )
+      .subscribe();
+  }
 
   Future<void> _load() async {
     try {
@@ -755,6 +971,7 @@ class _TachesTabState extends State<_TachesTab> {
         }
         loading = false;
       });
+      widget.onTasksChanged?.call();
     } catch (_) { setState(() => loading = false); }
   }
 
@@ -783,43 +1000,97 @@ class _TachesTabState extends State<_TachesTab> {
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(pad, pad, pad, pad + 20),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Planning & Tâches', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: kTextMain)),
-            SizedBox(height: 2),
-            Text('Gérez et suivez l\'avancement de chaque tâche', style: TextStyle(color: kTextSub, fontSize: 12)),
-          ])),
-          Container(
-            decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(8)),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              _ViewToggleBtn(label: 'Liste', icon: LucideIcons.list,      active: !_showGantt, onTap: () => setState(() => _showGantt = false)),
-              _ViewToggleBtn(label: 'Gantt', icon: LucideIcons.barChart2, active: _showGantt,  onTap: () => setState(() => _showGantt = true)),
-            ]),
+        if (isMobile) ...[
+          // ── Ligne 1 : Titre ──────────────────────────────────────────────
+          Row(children: [
+            Container(width: 4, height: 20, decoration: BoxDecoration(color: kAccent, borderRadius: BorderRadius.circular(2))),
+            const SizedBox(width: 10),
+            const Text('Planning & Tâches', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: kTextMain)),
+          ]),
+          const SizedBox(height: 4),
+          // ── Ligne 2 : Sous-titre ─────────────────────────────────────────
+          const Text(
+            'Gérez et suivez l\'avancement de chaque tâche',
+            style: TextStyle(color: kTextSub, fontSize: 12),
           ),
-          const SizedBox(width: 8),
-          OutlinedButton.icon(
-            onPressed: () => _showPhaseDialog(context, null),
-            icon: const Icon(LucideIcons.folderPlus, size: 13),
-            label: Text(isMobile ? '' : 'Phase', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-            style: OutlinedButton.styleFrom(
-              padding: EdgeInsets.symmetric(horizontal: isMobile ? 8 : 12, vertical: 10),
-              side: const BorderSide(color: Color(0xFFD1D5DB)),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          const SizedBox(height: 12),
+          // ── Ligne 3 : Boutons ─────────────────────────────────────────────
+          Row(children: [
+            Container(
+              decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(8)),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                _ViewToggleBtn(label: 'Liste', icon: LucideIcons.list,      active: !_showGantt, onTap: () => setState(() => _showGantt = false)),
+                _ViewToggleBtn(label: 'Gantt', icon: LucideIcons.barChart2, active: _showGantt,  onTap: () => setState(() => _showGantt = true)),
+              ]),
             ),
-          ),
-          const SizedBox(width: 8),
-          ElevatedButton.icon(
-            onPressed: () => _showTacheDialog(context, null, preselectedPhaseId: null),
-            icon: const Icon(LucideIcons.plus, size: 14, color: Colors.white),
-            label: Text(isMobile ? '' : 'Nouvelle tâche', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12)),
-            style: ElevatedButton.styleFrom(backgroundColor: kAccent, elevation: 0,
-              padding: EdgeInsets.symmetric(horizontal: isMobile ? 10 : 14, vertical: 10),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
-          ),
-        ]),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              onPressed: () => _showPhaseDialog(context, null),
+              icon: const Icon(LucideIcons.folderPlus, size: 13),
+              label: const Text('Phase', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                side: const BorderSide(color: Color(0xFFD1D5DB)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: () => _showTacheDialog(context, null, preselectedPhaseId: null),
+                icon: const Icon(LucideIcons.plus, size: 14, color: Colors.white),
+                label: const Text('Tâche', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: kAccent, elevation: 0,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+              ),
+            ),
+          ]),
+        ] else
+          // ── Desktop : tout en une seule ligne ────────────────────────────
+          Row(children: [
+            Expanded(child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+              Container(width: 4, height: 20, decoration: BoxDecoration(color: kAccent, borderRadius: BorderRadius.circular(2))),
+              const SizedBox(width: 10),
+              const Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                Text('Planning & Tâches', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: kTextMain)),
+                SizedBox(height: 2),
+                Text('Gérez et suivez l\'avancement de chaque tâche', style: TextStyle(color: kTextSub, fontSize: 12)),
+              ]),
+            ])),
+            Container(
+              decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(8)),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                _ViewToggleBtn(label: 'Liste', icon: LucideIcons.list,      active: !_showGantt, onTap: () => setState(() => _showGantt = false)),
+                _ViewToggleBtn(label: 'Gantt', icon: LucideIcons.barChart2, active: _showGantt,  onTap: () => setState(() => _showGantt = true)),
+              ]),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              onPressed: () => _showPhaseDialog(context, null),
+              icon: const Icon(LucideIcons.folderPlus, size: 13),
+              label: const Text('Phase', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                side: const BorderSide(color: Color(0xFFD1D5DB)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+            const SizedBox(width: 8),
+            ElevatedButton.icon(
+              onPressed: () => _showTacheDialog(context, null, preselectedPhaseId: null),
+              icon: const Icon(LucideIcons.plus, size: 14, color: Colors.white),
+              label: const Text('Nouvelle tâche', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: kAccent, elevation: 0,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ]),
         const SizedBox(height: 20),
-        _ProgressionCard(total: _total, terminees: _terminees, enCours: _enCours, enAttente: _enAttente, progression: _progression),
-        const SizedBox(height: 16),
         IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Expanded(child: _KpiCard(label: 'Total',      value: '$_total',     color: kAccent,                  icon: LucideIcons.listChecks)),
           const SizedBox(width: 10),
@@ -1022,11 +1293,13 @@ class _TachesTabState extends State<_TachesTab> {
     }
 
     Future<void> pickDate(BuildContext ctx, TextEditingController ctrl, {DateTime? firstDate}) async {
+      final effectiveFirst = firstDate ?? DateTime(2020);
       DateTime initial = DateTime.now();
       if (ctrl.text.isNotEmpty) { final parsed = DateTime.tryParse(ctrl.text); if (parsed != null) initial = parsed; }
+      if (initial.isBefore(effectiveFirst)) initial = effectiveFirst;
       final picked = await showDatePicker(
         context: ctx, initialDate: initial,
-        firstDate: firstDate ?? DateTime(2020), lastDate: DateTime(2035),
+        firstDate: effectiveFirst, lastDate: DateTime(2035),
         locale: const Locale('fr', 'FR'),
         builder: (ctx2, child) => Theme(data: Theme.of(ctx2).copyWith(colorScheme: ColorScheme.light(primary: kAccent, onPrimary: Colors.white, surface: Colors.white, onSurface: kTextMain)), child: child!),
       );
@@ -1609,8 +1882,34 @@ class _FinancesTabState extends State<_FinancesTab> {
   List<Facture> _factures = [];
   bool _loading = true;
   bool _notifiedBudget = false;
+  RealtimeChannel? _channel;
 
-  @override void initState() { super.initState(); _load(); }
+  @override
+  void initState() {
+    super.initState();
+    _load();
+    _subscribeRealtime();
+  }
+
+  @override
+  void dispose() {
+    _channel?.unsubscribe();
+    super.dispose();
+  }
+
+  void _subscribeRealtime() {
+    final pid = widget.project.id;
+    _channel = Supabase.instance.client
+      .channel('factures-$pid')
+      .onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'factures',
+        filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'projet_id', value: pid),
+        callback: (_) { if (mounted) _load(); },
+      )
+      .subscribe();
+  }
 
   Future<void> _load() async {
     try {
@@ -2665,73 +2964,232 @@ class _FactureDialogState extends State<_FactureDialog> {
 // ══════════════════════════════════════════════════════════════════════════════
 //  GANTT
 // ══════════════════════════════════════════════════════════════════════════════
-class _GanttView extends StatelessWidget {
-  final List<Tache> taches; final List<Phase> phases;
+class _GanttView extends StatefulWidget {
+  final List<Tache> taches;
+  final List<Phase> phases;
   const _GanttView({required this.taches, required this.phases});
+  @override
+  State<_GanttView> createState() => _GanttViewState();
+}
+
+class _GanttViewState extends State<_GanttView> {
+  final _scrollCtrl = ScrollController();
   static const _monthNames = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
-  static const double _labelW = 180.0;
+
+  @override
+  void dispose() { _scrollCtrl.dispose(); super.dispose(); }
 
   @override
   Widget build(BuildContext context) {
-    final withDates    = taches.where((t) => t.dateDebut != null && t.dateFin != null).toList()..sort((a, b) => a.dateDebut!.compareTo(b.dateDebut!));
-    final withoutDates = taches.where((t) => t.dateDebut == null || t.dateFin == null).toList();
-    if (withDates.isEmpty) return Container(padding: const EdgeInsets.all(24), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB))), child: Column(children: [const Icon(LucideIcons.calendarOff, size: 36, color: kTextSub), const SizedBox(height: 12), const Text('Aucune tâche avec des dates', style: TextStyle(color: kTextSub, fontSize: 14)), const SizedBox(height: 6), const Text('Ajoutez des dates à vos tâches pour afficher le Gantt', style: TextStyle(color: kTextSub, fontSize: 12), textAlign: TextAlign.center)]));
+    final isMobile = MediaQuery.of(context).size.width < 800;
+    final labelW   = isMobile ? 130.0 : 180.0;
+    final rowH     = isMobile ? 44.0  : 48.0;
+    final colW     = isMobile ? 70.0  : 80.0;
+
+    final withDates    = widget.taches.where((t) => t.dateDebut != null && t.dateFin != null).toList()..sort((a, b) => a.dateDebut!.compareTo(b.dateDebut!));
+    final withoutDates = widget.taches.where((t) => t.dateDebut == null || t.dateFin == null).toList();
+
+    if (withDates.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB))),
+        child: const Column(children: [
+          Icon(LucideIcons.calendarOff, size: 36, color: kTextSub),
+          SizedBox(height: 12),
+          Text('Aucune tâche avec des dates', style: TextStyle(color: kTextSub, fontSize: 14)),
+          SizedBox(height: 6),
+          Text('Ajoutez des dates à vos tâches pour afficher le Gantt', style: TextStyle(color: kTextSub, fontSize: 12), textAlign: TextAlign.center),
+        ]),
+      );
+    }
+
     DateTime minDate = withDates.map((t) => DateTime.parse(t.dateDebut!)).reduce((a, b) => a.isBefore(b) ? a : b);
     DateTime maxDate = withDates.map((t) => DateTime.parse(t.dateFin!)).reduce((a, b) => a.isAfter(b) ? a : b);
-    minDate = DateTime(minDate.year, minDate.month, 1); maxDate = DateTime(maxDate.year, maxDate.month + 1, 1);
+    minDate = DateTime(minDate.year, minDate.month, 1);
+    maxDate = DateTime(maxDate.year, maxDate.month + 1, 1);
     final totalDays = maxDate.difference(minDate).inDays;
-    final months = <DateTime>[]; var cur = DateTime(minDate.year, minDate.month, 1);
+
+    final months = <DateTime>[];
+    var cur = DateTime(minDate.year, minDate.month, 1);
     while (cur.isBefore(maxDate)) { months.add(cur); cur = DateTime(cur.year, cur.month + 1, 1); }
-    return Container(decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 6, offset: const Offset(0, 2))]), clipBehavior: Clip.hardEdge, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 10), child: Row(children: [const Icon(LucideIcons.barChart2, size: 16, color: kTextSub), const SizedBox(width: 8), const Text('Diagramme de Gantt', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: kTextMain))])),
-      SingleChildScrollView(scrollDirection: Axis.horizontal, child: LayoutBuilder(builder: (ctx, _) {
-        final chartW = (months.length * 80.0).clamp(400.0, 1200.0); final totalW = _labelW + chartW;
-        return SizedBox(width: totalW, child: Column(children: [
-          Container(color: const Color(0xFF1F2937), child: Row(children: [
-            Container(width: _labelW, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), decoration: const BoxDecoration(border: Border(right: BorderSide(color: Color(0xFF374151)))), child: const Text('Tâche', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700))),
-            Expanded(child: Column(children: [const Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Text('Timeline', style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w600))), SizedBox(height: 28, child: LayoutBuilder(builder: (ctx2, cs2) { final W = cs2.maxWidth; return Stack(children: months.map((m) { final s = m.difference(minDate).inDays / totalDays; final e = DateTime(m.year, m.month + 1, 1).difference(minDate).inDays / totalDays; return Positioned(left: (s * W).clamp(0.0, W), width: ((e - s) * W).clamp(0.0, W), top: 0, bottom: 0, child: Container(decoration: const BoxDecoration(border: Border(left: BorderSide(color: Color(0xFF374151), width: 0.5))), alignment: Alignment.center, child: Text('${_monthNames[m.month - 1]} ${m.year}', style: const TextStyle(color: Colors.white60, fontSize: 10, fontWeight: FontWeight.w500)))); }).toList()); }))]))
+
+    final chartW   = (months.length * colW).clamp(300.0, 1400.0);
+    final totalW   = labelW + chartW;
+    final today    = DateTime.now();
+    final todayInRange = today.isAfter(minDate) && today.isBefore(maxDate);
+
+    void scrollToToday() {
+      final offset = (labelW + (today.difference(minDate).inDays / totalDays) * chartW - 100).clamp(0.0, totalW);
+      _scrollCtrl.animateTo(offset, duration: const Duration(milliseconds: 400), curve: Curves.easeInOut);
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 6, offset: const Offset(0, 2))],
+      ),
+      clipBehavior: Clip.hardEdge,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // ── Header ─────────────────────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 12, 10),
+          child: Row(children: [
+            const Icon(LucideIcons.barChart2, size: 16, color: kTextSub),
+            const SizedBox(width: 8),
+            const Expanded(child: Text('Diagramme de Gantt', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: kTextMain))),
+            if (todayInRange)
+              TextButton.icon(
+                onPressed: scrollToToday,
+                icon: const Icon(LucideIcons.target, size: 13, color: kAccent),
+                label: const Text("Aujourd'hui", style: TextStyle(color: kAccent, fontSize: 12, fontWeight: FontWeight.w600)),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  backgroundColor: kAccent.withOpacity(0.08),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+          ]),
+        ),
+        // ── Chart ──────────────────────────────────────────────────────────
+        SingleChildScrollView(
+          controller: _scrollCtrl,
+          scrollDirection: Axis.horizontal,
+          child: SizedBox(width: totalW, child: Column(children: [
+            // Month header
+            Container(color: const Color(0xFF1F2937), child: Row(children: [
+              Container(
+                width: labelW,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: const BoxDecoration(border: Border(right: BorderSide(color: Color(0xFF374151)))),
+                child: Text('Tâche', style: TextStyle(color: Colors.white, fontSize: isMobile ? 10 : 12, fontWeight: FontWeight.w700)),
+              ),
+              Expanded(child: Column(children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 5),
+                  child: Text('Timeline', style: TextStyle(color: Colors.white70, fontSize: isMobile ? 9 : 11, fontWeight: FontWeight.w600)),
+                ),
+                SizedBox(height: 24, child: LayoutBuilder(builder: (ctx2, cs2) {
+                  final W = cs2.maxWidth;
+                  return Stack(children: months.map((m) {
+                    final s = m.difference(minDate).inDays / totalDays;
+                    final e = DateTime(m.year, m.month + 1, 1).difference(minDate).inDays / totalDays;
+                    return Positioned(
+                      left: (s * W).clamp(0.0, W), width: ((e - s) * W).clamp(0.0, W), top: 0, bottom: 0,
+                      child: Container(
+                        decoration: const BoxDecoration(border: Border(left: BorderSide(color: Color(0xFF374151), width: 0.5))),
+                        alignment: Alignment.center,
+                        child: Text('${_monthNames[m.month - 1]} ${m.year}',
+                            style: const TextStyle(color: Colors.white60, fontSize: 9, fontWeight: FontWeight.w500)),
+                      ),
+                    );
+                  }).toList());
+                })),
+              ])),
+            ])),
+            // Rows
+            ..._buildGanttRows(withDates, widget.phases, minDate, totalDays, months, labelW, rowH),
+            // Footer — tasks without dates
+            if (withoutDates.isNotEmpty) ...[
+              Container(height: 1, color: const Color(0xFFE5E7EB)),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                child: Row(children: [
+                  const Icon(LucideIcons.alertCircle, size: 12, color: kTextSub),
+                  const SizedBox(width: 6),
+                  Text('${withoutDates.length} tâche(s) sans dates', style: const TextStyle(color: kTextSub, fontSize: 12)),
+                  const SizedBox(width: 8),
+                  Wrap(spacing: 6, children: withoutDates.map((t) => Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(10)),
+                    child: Text(t.titre, style: const TextStyle(fontSize: 11, color: kTextSub)),
+                  )).toList()),
+                ]),
+              ),
+            ],
           ])),
-          ..._buildGanttRows(withDates, phases, minDate, totalDays, months),
-          if (withoutDates.isNotEmpty) ...[Container(height: 1, color: const Color(0xFFE5E7EB)), Padding(padding: const EdgeInsets.all(12), child: Row(children: [const Icon(LucideIcons.alertCircle, size: 12, color: kTextSub), const SizedBox(width: 6), Text('${withoutDates.length} tâche(s) sans dates', style: const TextStyle(color: kTextSub, fontSize: 12)), const SizedBox(width: 8), Wrap(spacing: 6, children: withoutDates.map((t) => Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(10)), child: Text(t.titre, style: const TextStyle(fontSize: 11, color: kTextSub)))).toList())]))],
-        ]));
-      })),
-    ]));
+        ),
+      ]),
+    );
   }
 
-  List<Widget> _buildGanttRows(List<Tache> withDates, List<Phase> phases, DateTime minDate, int totalDays, List<DateTime> months) {
-    final rows = <Widget>[]; final today = DateTime.now();
+  List<Widget> _buildGanttRows(
+    List<Tache> withDates, List<Phase> phases,
+    DateTime minDate, int totalDays, List<DateTime> months,
+    double labelW, double rowH,
+  ) {
+    final rows  = <Widget>[];
+    final today = DateTime.now();
+
     void addTacheRow(Tache t, int i) {
-      final debut = DateTime.parse(t.dateDebut!); final fin = DateTime.parse(t.dateFin!);
-      final pct = t.statut == 'termine' ? 100 : t.statut == 'en_cours' ? 65 : 0; final color = _tacheColor(t.statut);
-      rows.add(Container(height: 48, color: i % 2 == 0 ? Colors.white : const Color(0xFFFAFAFA), child: Row(children: [
-        Container(width: _labelW, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6), decoration: const BoxDecoration(border: Border(right: BorderSide(color: Color(0xFFE5E7EB)))), child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center, children: [Text(t.titre, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kTextMain), overflow: TextOverflow.ellipsis), if (t.description.isNotEmpty) Text(t.description, style: const TextStyle(fontSize: 10, color: kTextSub), overflow: TextOverflow.ellipsis)])),
-        Expanded(child: LayoutBuilder(builder: (ctx, cs) {
-          final W = cs.maxWidth;
-          final barL = ((debut.difference(minDate).inDays / totalDays) * W).clamp(0.0, W);
-          final barW = (((fin.difference(debut).inDays + 1) / totalDays) * W).clamp(8.0, W - barL);
-          final todayX = ((today.difference(minDate).inDays / totalDays) * W).clamp(0.0, W);
-          return Stack(children: [
-            ...months.map((m) { final mx = (m.difference(minDate).inDays / totalDays * W).clamp(0.0, W); return Positioned(left: mx, top: 0, bottom: 0, width: 0.5, child: Container(color: const Color(0xFFE5E7EB))); }),
-            if (todayX > 0 && todayX < W) Positioned(left: todayX, top: 0, bottom: 0, width: 1.5, child: Container(color: kRed.withOpacity(0.3))),
-            Positioned(left: barL, top: 12, bottom: 12, width: barW, child: Container(decoration: BoxDecoration(color: const Color(0xFFE5E7EB), borderRadius: BorderRadius.circular(4)))),
-            Positioned(left: barL, top: 12, bottom: 12, width: (barW * pct / 100).clamp(0.0, barW), child: Container(decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(4)))),
-            Positioned(left: barL, top: 0, bottom: 0, width: barW, child: Center(child: Text('$pct%', style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w700, shadows: [Shadow(color: Colors.black26, blurRadius: 2)])))),
-          ]);
-        })),
-      ])));
+      final debut = DateTime.parse(t.dateDebut!);
+      final fin   = DateTime.parse(t.dateFin!);
+      final pct   = t.statut == 'termine' ? 100 : t.statut == 'en_cours' ? 65 : 0;
+      final color = _tacheColor(t.statut);
+      rows.add(Container(
+        height: rowH,
+        color: i % 2 == 0 ? Colors.white : const Color(0xFFFAFAFA),
+        child: Row(children: [
+          Container(
+            width: labelW,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: const BoxDecoration(border: Border(right: BorderSide(color: Color(0xFFE5E7EB)))),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center, children: [
+              Text(t.titre, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: kTextMain), overflow: TextOverflow.ellipsis),
+              if (t.description.isNotEmpty)
+                Text(t.description, style: const TextStyle(fontSize: 9, color: kTextSub), overflow: TextOverflow.ellipsis),
+            ]),
+          ),
+          Expanded(child: LayoutBuilder(builder: (ctx, cs) {
+            final W    = cs.maxWidth;
+            final barL = ((debut.difference(minDate).inDays / totalDays) * W).clamp(0.0, W);
+            final barW = (((fin.difference(debut).inDays + 1) / totalDays) * W).clamp(8.0, W - barL);
+            final todayX = ((today.difference(minDate).inDays / totalDays) * W).clamp(0.0, W);
+            return Stack(children: [
+              ...months.map((m) { final mx = (m.difference(minDate).inDays / totalDays * W).clamp(0.0, W); return Positioned(left: mx, top: 0, bottom: 0, width: 0.5, child: Container(color: const Color(0xFFE5E7EB))); }),
+              if (todayX > 0 && todayX < W) Positioned(left: todayX, top: 0, bottom: 0, width: 2, child: Container(color: kRed.withOpacity(0.5))),
+              Positioned(left: barL, top: 10, bottom: 10, width: barW, child: Container(decoration: BoxDecoration(color: const Color(0xFFE5E7EB), borderRadius: BorderRadius.circular(4)))),
+              Positioned(left: barL, top: 10, bottom: 10, width: (barW * pct / 100).clamp(0.0, barW), child: Container(decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(4)))),
+              Positioned(left: barL, top: 0, bottom: 0, width: barW, child: Center(child: Text('$pct%', style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w700, shadows: [Shadow(color: Colors.black26, blurRadius: 2)])))),
+            ]);
+          })),
+        ]),
+      ));
     }
+
     void addPhaseHeader(String nom, Color color) {
-      rows.add(Container(color: const Color(0xFFF3F4F6), child: Row(children: [Container(width: _labelW, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), decoration: const BoxDecoration(border: Border(right: BorderSide(color: Color(0xFFE5E7EB)))), child: Row(children: [Container(width: 8, height: 8, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2))), const SizedBox(width: 8), Expanded(child: Text(nom, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextMain), overflow: TextOverflow.ellipsis))])), const Expanded(child: SizedBox(height: 30))])));
+      rows.add(Container(
+        color: const Color(0xFFF3F4F6),
+        child: Row(children: [
+          Container(
+            width: labelW,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: const BoxDecoration(border: Border(right: BorderSide(color: Color(0xFFE5E7EB)))),
+            child: Row(children: [
+              Container(width: 7, height: 7, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2))),
+              const SizedBox(width: 7),
+              Expanded(child: Text(nom, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: kTextMain), overflow: TextOverflow.ellipsis)),
+            ]),
+          ),
+          const Expanded(child: SizedBox(height: 30)),
+        ]),
+      ));
     }
+
     for (final ph in phases) {
-      final phTaches = withDates.where((t) => t.phaseId == ph.id).toList(); if (phTaches.isEmpty) continue;
-      final prog = phTaches.where((t) => t.statut == 'termine').length / phTaches.length;
+      final phTaches = withDates.where((t) => t.phaseId == ph.id).toList();
+      if (phTaches.isEmpty) continue;
+      final prog  = phTaches.where((t) => t.statut == 'termine').length / phTaches.length;
       final color = prog == 1.0 ? const Color(0xFF10B981) : prog > 0 ? kAccent : const Color(0xFF9CA3AF);
       addPhaseHeader(ph.nom, color);
       for (int i = 0; i < phTaches.length; i++) addTacheRow(phTaches[i], i);
     }
     final sansPh = withDates.where((t) => t.phaseId == null || t.phaseId!.isEmpty).toList();
-    if (sansPh.isNotEmpty) { addPhaseHeader('Sans phase', const Color(0xFF9CA3AF)); for (int i = 0; i < sansPh.length; i++) addTacheRow(sansPh[i], i); }
+    if (sansPh.isNotEmpty) {
+      addPhaseHeader('Sans phase', const Color(0xFF9CA3AF));
+      for (int i = 0; i < sansPh.length; i++) addTacheRow(sansPh[i], i);
+    }
     return rows;
   }
 }
@@ -2750,8 +3208,34 @@ class _DocumentsTabState extends State<_DocumentsTab> {
   List<_DocUI>   _documentsUI = [];
   bool   _loading     = true;
   String _filterPhase = 'Toutes les phases';
+  RealtimeChannel? _channel;
 
-  @override void initState() { super.initState(); _load(); }
+  @override
+  void initState() {
+    super.initState();
+    _load();
+    _subscribeRealtime();
+  }
+
+  @override
+  void dispose() {
+    _channel?.unsubscribe();
+    super.dispose();
+  }
+
+  void _subscribeRealtime() {
+    final pid = widget.project.id;
+    _channel = Supabase.instance.client
+      .channel('documents-$pid')
+      .onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'documents',
+        filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'projet_id', value: pid),
+        callback: (_) { if (mounted) _load(); },
+      )
+      .subscribe();
+  }
 
   Future<void> _load() async {
     try {
@@ -3115,8 +3599,34 @@ class _EquipeTab extends StatefulWidget {
 class _EquipeTabState extends State<_EquipeTab> {
   List<Membre> membres = [];
   bool loading = true;
+  RealtimeChannel? _channel;
 
-  @override void initState() { super.initState(); _load(); }
+  @override
+  void initState() {
+    super.initState();
+    _load();
+    _subscribeRealtime();
+  }
+
+  @override
+  void dispose() {
+    _channel?.unsubscribe();
+    super.dispose();
+  }
+
+  void _subscribeRealtime() {
+    final pid = widget.project.id;
+    _channel = Supabase.instance.client
+      .channel('equipe-$pid')
+      .onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'project_members',
+        filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'projet_id', value: pid),
+        callback: (_) { if (mounted) _load(); },
+      )
+      .subscribe();
+  }
 
   Future<void> _load() async {
     try {
@@ -4626,9 +5136,36 @@ class _CommentairesTabState extends State<_CommentairesTab> {
 
   bool _firstLoad = true;
   final Set<String> _seenClientIds = {};
+  RealtimeChannel? _channel;
 
-  @override void initState() { super.initState(); _load(); }
-  @override void dispose()   { _ctrl.dispose(); _scroll.dispose(); super.dispose(); }
+  @override
+  void initState() {
+    super.initState();
+    _load();
+    _subscribeRealtime();
+  }
+
+  @override
+  void dispose() {
+    _channel?.unsubscribe();
+    _ctrl.dispose();
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  void _subscribeRealtime() {
+    final pid = widget.project.id;
+    _channel = Supabase.instance.client
+      .channel('commentaires-$pid')
+      .onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'commentaires',
+        filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'projet_id', value: pid),
+        callback: (_) { if (mounted) _load(); },
+      )
+      .subscribe();
+  }
 
   Future<void> _load() async {
     try {
