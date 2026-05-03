@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:archi_manager/models/notification.dart';
 import '../service/notification_service.dart';
 import 'package:file_picker/file_picker.dart';
@@ -1995,11 +1996,11 @@ class _FinancesTabState extends State<_FinancesTab> {
         const SizedBox(height: 20),
 
         // ── KPIs ───────────────────────────────────────────────────────────
-        _buildKpis(),
+        _buildKpis(isMobile),
         const SizedBox(height: 16),
 
         // ── BARRE BUDGET ───────────────────────────────────────────────────
-        _buildBudgetBar(),
+        _buildBudgetBar(isMobile),
         const SizedBox(height: 24),
 
         // ── DEVIS INITIAL ──────────────────────────────────────────────────
@@ -2007,7 +2008,7 @@ class _FinancesTabState extends State<_FinancesTab> {
         const SizedBox(height: 24),
 
         // ── TABLEAU TOUTES FACTURES ────────────────────────────────────────
-        _buildTableauFactures(),
+        _buildTableauFactures(isMobile),
       ]),
     );
   }
@@ -2038,21 +2039,31 @@ class _FinancesTabState extends State<_FinancesTab> {
   }
 
   // ── KPIs ────────────────────────────────────────────────────────────────────
-  Widget _buildKpis() {
+  Widget _buildKpis(bool isMobile) {
     final barColor = _depasse ? kRed : _approche ? const Color(0xFFF59E0B) : kAccent;
+    final cards = [
+      _KpiCard(label: 'Budget projet',  value: widget.fmt(_budgetTotal),     color: const Color(0xFF6366F1), icon: LucideIcons.wallet),
+      _KpiCard(label: 'Devis initial',  value: _devisInitial != null ? widget.fmt(_montantDevis) : '—', color: const Color(0xFF8B5CF6), icon: LucideIcons.fileText),
+      _KpiCard(label: 'Total factures', value: widget.fmt(_totalFacture),    color: barColor,               icon: LucideIcons.receipt),
+      _KpiCard(label: _depasse ? 'Dépassement' : 'Reste', value: widget.fmt(_ecart.abs()), color: _depasse ? kRed : const Color(0xFF10B981), icon: _depasse ? LucideIcons.alertTriangle : LucideIcons.trendingDown),
+    ];
+    if (isMobile) {
+      return Column(children: [
+        Row(children: [Expanded(child: cards[0]), const SizedBox(width: 10), Expanded(child: cards[1])]),
+        const SizedBox(height: 10),
+        Row(children: [Expanded(child: cards[2]), const SizedBox(width: 10), Expanded(child: cards[3])]),
+      ]);
+    }
     return Row(children: [
-      Expanded(child: _KpiCard(label: 'Budget projet',  value: widget.fmt(_budgetTotal),     color: const Color(0xFF6366F1), icon: LucideIcons.wallet)),
-      const SizedBox(width: 10),
-      Expanded(child: _KpiCard(label: 'Devis initial',  value: _devisInitial != null ? widget.fmt(_montantDevis) : '—',   color: const Color(0xFF8B5CF6), icon: LucideIcons.fileText)),
-      const SizedBox(width: 10),
-      Expanded(child: _KpiCard(label: 'Total factures', value: widget.fmt(_totalFacture),    color: barColor,               icon: LucideIcons.receipt)),
-      const SizedBox(width: 10),
-      Expanded(child: _KpiCard(label: _depasse ? 'Dépassement' : 'Reste', value: widget.fmt(_ecart.abs()), color: _depasse ? kRed : const Color(0xFF10B981), icon: _depasse ? LucideIcons.alertTriangle : LucideIcons.trendingDown)),
+      Expanded(child: cards[0]), const SizedBox(width: 10),
+      Expanded(child: cards[1]), const SizedBox(width: 10),
+      Expanded(child: cards[2]), const SizedBox(width: 10),
+      Expanded(child: cards[3]),
     ]);
   }
 
   // ── Barre budget ─────────────────────────────────────────────────────────────
-  Widget _buildBudgetBar() {
+  Widget _buildBudgetBar(bool isMobile) {
     final barColor = _depasse ? kRed : _approche ? const Color(0xFFF59E0B) : kAccent;
     final pctDisplay = (_pct * 100).clamp(0, 999).toStringAsFixed(1);
 
@@ -2103,14 +2114,24 @@ class _FinancesTabState extends State<_FinancesTab> {
               if (wExtra > 0) Positioned(left: wDevis, child: Container(height: 10, width: wExtra, decoration: BoxDecoration(color: const Color(0xFFF59E0B), borderRadius: BorderRadius.only(topLeft: Radius.circular(wDevis == 0 ? 6 : 0), bottomLeft: Radius.circular(wDevis == 0 ? 6 : 0), topRight: const Radius.circular(6), bottomRight: const Radius.circular(6))))),
             ]),
             const SizedBox(height: 8),
-            // Légende
-            Row(children: [
-              _BarLegend(color: const Color(0xFF8B5CF6), label: 'Devis initial', value: widget.fmt(_montantDevis)),
-              const SizedBox(width: 16),
-              _BarLegend(color: const Color(0xFFF59E0B), label: 'Extras', value: widget.fmt(_totalExtra)),
-              const Spacer(),
-              _BarLegend(color: const Color(0xFFE5E7EB), label: 'Budget', value: widget.fmt(_budgetTotal), dark: true),
-            ]),
+            // Légende — wrap on mobile
+            isMobile
+                ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Row(children: [
+                      _BarLegend(color: const Color(0xFF8B5CF6), label: 'Devis initial', value: widget.fmt(_montantDevis)),
+                      const SizedBox(width: 16),
+                      _BarLegend(color: const Color(0xFFF59E0B), label: 'Extras', value: widget.fmt(_totalExtra)),
+                    ]),
+                    const SizedBox(height: 6),
+                    _BarLegend(color: const Color(0xFFE5E7EB), label: 'Budget total', value: widget.fmt(_budgetTotal), dark: true),
+                  ])
+                : Row(children: [
+                    _BarLegend(color: const Color(0xFF8B5CF6), label: 'Devis initial', value: widget.fmt(_montantDevis)),
+                    const SizedBox(width: 16),
+                    _BarLegend(color: const Color(0xFFF59E0B), label: 'Extras', value: widget.fmt(_totalExtra)),
+                    const Spacer(),
+                    _BarLegend(color: const Color(0xFFE5E7EB), label: 'Budget', value: widget.fmt(_budgetTotal), dark: true),
+                  ]),
           ]);
         }),
       ]),
@@ -2141,10 +2162,65 @@ class _FinancesTabState extends State<_FinancesTab> {
   }
 
   // ── Tableau toutes factures ──────────────────────────────────────────────────
-  Widget _buildTableauFactures() {
-    final toutes = _factures; // initiale + extras mélangées, triées par date
-    toutes.sort((a, b) => (a.createdAt).compareTo(b.createdAt));
+  Widget _buildTableauFactures(bool isMobile) {
+    final toutes = List<Facture>.from(_factures)
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
+    // ── Mobile : cartes empilées ─────────────────────────────────────────
+    if (isMobile) {
+      return Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8, offset: const Offset(0, 2))],
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          // En-tête
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+            child: Row(children: [
+              const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('Toutes les factures', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: kTextMain)),
+                SizedBox(height: 2),
+                Text('Devis initial + extras', style: TextStyle(fontSize: 11, color: kTextSub)),
+              ])),
+              _FinBtn(label: 'Ajouter', icon: LucideIcons.plus, color: kAccent, onTap: () => _ouvrirDialog(isInitiale: false)),
+            ]),
+          ),
+          const SizedBox(height: 12),
+          const Divider(height: 1, color: Color(0xFFF3F4F6)),
+          if (toutes.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 36),
+              child: Center(child: Text('Aucune facture — créez d\'abord le devis initial', style: TextStyle(color: kTextSub, fontSize: 13), textAlign: TextAlign.center)),
+            )
+          else ...[
+            const SizedBox(height: 8),
+            ...toutes.asMap().entries.map((e) {
+              final i = e.key; final f = e.value;
+              return _LigneFacture(
+                facture: f, index: i, fmt: widget.fmt,
+                onDelete: () => _supprimerFacture(f),
+                onEdit: () => _ouvrirDialog(isInitiale: (f.factureType ?? 'extra') == 'initiale', existing: f),
+              );
+            }),
+            const SizedBox(height: 4),
+            const Divider(height: 1, color: Color(0xFFE5E7EB)),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(children: [
+                const Text('TOTAL', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: kTextSub)),
+                const Spacer(),
+                Text(widget.fmt(_totalFacture), style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _depasse ? kRed : kTextMain)),
+              ]),
+            ),
+          ],
+        ]),
+      );
+    }
+
+    // ── Desktop : tableau classique ──────────────────────────────────────
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -2175,13 +2251,13 @@ class _FinancesTabState extends State<_FinancesTab> {
           color: const Color(0xFFF9FAFB),
           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
           child: Row(children: const [
-            SizedBox(width: 100, child: Text('TYPE',       style: _hStyle)),
+            SizedBox(width: 100, child: Text('TYPE',    style: _hStyle)),
             SizedBox(width: 8),
-            Expanded(flex: 3, child: Text('N° / TÂCHE',        style: _hStyle)),
-            Expanded(flex: 2, child: Text('ÉMETTEUR',     style: _hStyle)),
-            Expanded(flex: 2, child: Text('ÉCHÉANCE',     style: _hStyle)),
-            Expanded(flex: 2, child: Text('MONTANT',      style: _hStyle, textAlign: TextAlign.right)),
-            SizedBox(width: 80, child: Text('STATUT',     style: _hStyle, textAlign: TextAlign.center)),
+            Expanded(flex: 3, child: Text('N° / TÂCHE', style: _hStyle)),
+            Expanded(flex: 2, child: Text('ÉMETTEUR',  style: _hStyle)),
+            Expanded(flex: 2, child: Text('ÉCHÉANCE',  style: _hStyle)),
+            Expanded(flex: 2, child: Text('MONTANT',   style: _hStyle, textAlign: TextAlign.right)),
+            SizedBox(width: 80, child: Text('STATUT',  style: _hStyle, textAlign: TextAlign.center)),
             SizedBox(width: 48),
           ]),
         ),
@@ -2197,14 +2273,9 @@ class _FinancesTabState extends State<_FinancesTab> {
           ...toutes.asMap().entries.map((e) {
             final i = e.key; final f = e.value;
             return _LigneFacture(
-              facture: f,
-              index: i,
-              fmt: widget.fmt,
+              facture: f, index: i, fmt: widget.fmt,
               onDelete: () => _supprimerFacture(f),
-              onEdit: () => _ouvrirDialog(
-                isInitiale: (f.factureType ?? 'extra') == 'initiale',
-                existing: f,
-              ),
+              onEdit: () => _ouvrirDialog(isInitiale: (f.factureType ?? 'extra') == 'initiale', existing: f),
             );
           }),
 
@@ -2215,7 +2286,7 @@ class _FinancesTabState extends State<_FinancesTab> {
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
             child: Row(children: [
               const Spacer(),
-              Text('TOTAL  ', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: kTextSub)),
+              const Text('TOTAL  ', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: kTextSub)),
               Text(widget.fmt(_totalFacture), style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _depasse ? kRed : kTextMain)),
               const SizedBox(width: 128),
             ]),
@@ -2239,91 +2310,186 @@ class _LigneFacture extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final f = facture;
-    final isInitiale = (f.factureType ?? 'extra') == 'initiale';
-    // TYPE : Facture Globale (devis initial) ou Facture Supplémentaire (extra)
-    final typeColor  = isInitiale ? const Color(0xFF8B5CF6) : const Color(0xFFF59E0B);
-    final typeLabel  = isInitiale ? 'Fact. Globale' : 'Fact. Suppl.';
-    final statColor  = _factureColor(f.statut);
-    final hasPj      = f.urlPdf != null && f.urlPdf!.isNotEmpty;
+    final isMobile = MediaQuery.of(context).size.width < 800;
+    return isMobile ? _buildCard(context) : _buildRow(context);
+  }
+
+  // ── Mobile : carte ────────────────────────────────────────────────────────
+  Widget _buildCard(BuildContext context) {
+    final f         = facture;
+    final isInit    = (f.factureType ?? 'extra') == 'initiale';
+    final typeColor = isInit ? const Color(0xFF8B5CF6) : const Color(0xFFF59E0B);
+    final typeLabel = isInit ? 'Fact. Globale' : 'Fact. Suppl.';
+    final statColor = _factureColor(f.statut);
+    final hasPj     = f.urlPdf != null && f.urlPdf!.isNotEmpty;
+    final emetteur  = f.fournisseur.isNotEmpty ? f.fournisseur : (f.chefProjet.isNotEmpty ? f.chefProjet : null);
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: index % 2 == 0 ? Colors.white : const Color(0xFFFAFAFA),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Ligne 1 : type + montant
+        Row(children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: typeColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: typeColor.withOpacity(0.3)),
+            ),
+            child: Text(typeLabel, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: typeColor)),
+          ),
+          const Spacer(),
+          Text(fmt(f.montant), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: kTextMain)),
+        ]),
+        const SizedBox(height: 7),
+        // Ligne 2 : numéro + statut
+        Row(children: [
+          Expanded(child: Text(f.numero.isNotEmpty ? f.numero : '—',
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kTextMain),
+              overflow: TextOverflow.ellipsis)),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+            decoration: BoxDecoration(color: statColor.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
+            child: Text(_factureLabel(f.statut), style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: statColor)),
+          ),
+        ]),
+        // Ligne 3 : émetteur + échéance
+        if (emetteur != null || f.dateEcheance?.isNotEmpty == true) ...[
+          const SizedBox(height: 7),
+          Row(children: [
+            if (emetteur != null) ...[
+              const Icon(LucideIcons.building2, size: 11, color: kTextSub),
+              const SizedBox(width: 4),
+              Flexible(child: Text(emetteur, style: const TextStyle(fontSize: 11, color: kTextSub), overflow: TextOverflow.ellipsis)),
+            ],
+            if (emetteur != null && f.dateEcheance?.isNotEmpty == true) const SizedBox(width: 12),
+            if (f.dateEcheance?.isNotEmpty == true) ...[
+              const Icon(LucideIcons.calendar, size: 11, color: kTextSub),
+              const SizedBox(width: 4),
+              Text(f.dateEcheance!, style: const TextStyle(fontSize: 11, color: kTextSub)),
+            ],
+          ]),
+        ],
+        // Ligne 4 : tâche associée
+        if (f.tacheAssociee.isNotEmpty) ...[
+          const SizedBox(height: 5),
+          Row(children: [
+            const Icon(LucideIcons.checkSquare, size: 11, color: kAccent),
+            const SizedBox(width: 4),
+            Flexible(child: Text(f.tacheAssociee, style: const TextStyle(fontSize: 11, color: kAccent, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis)),
+          ]),
+        ],
+        const SizedBox(height: 10),
+        const Divider(height: 1, color: Color(0xFFF3F4F6)),
+        const SizedBox(height: 8),
+        // Actions
+        Row(children: [
+          if (hasPj)
+            GestureDetector(
+              onTap: () async {
+                final raw = f.urlPdf!;
+                if (raw.startsWith('fichier:')) {
+                  _snack(context, 'Fichier local non accessible. Modifiez la facture pour ré-uploader.', const Color(0xFFF59E0B));
+                } else {
+                  final uri = Uri.tryParse(raw);
+                  if (uri != null) try { await launchUrl(uri, mode: LaunchMode.externalApplication); } catch (_) {}
+                }
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(color: const Color(0xFFEFF6FF), borderRadius: BorderRadius.circular(6), border: Border.all(color: const Color(0xFFBFDBFE))),
+                child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(LucideIcons.paperclip, size: 12, color: Color(0xFF3B82F6)),
+                  SizedBox(width: 4),
+                  Text('Fichier', style: TextStyle(fontSize: 11, color: Color(0xFF3B82F6), fontWeight: FontWeight.w600)),
+                ]),
+              ),
+            ),
+          const Spacer(),
+          GestureDetector(
+            onTap: onEdit,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+              decoration: BoxDecoration(color: kAccent.withOpacity(0.08), borderRadius: BorderRadius.circular(7), border: Border.all(color: kAccent.withOpacity(0.25))),
+              child: const Text('Modifier', style: TextStyle(fontSize: 12, color: kAccent, fontWeight: FontWeight.w700)),
+            ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: onDelete,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+              decoration: BoxDecoration(color: kRed.withOpacity(0.07), borderRadius: BorderRadius.circular(7), border: Border.all(color: kRed.withOpacity(0.25))),
+              child: const Text('Suppr.', style: TextStyle(fontSize: 12, color: kRed, fontWeight: FontWeight.w700)),
+            ),
+          ),
+        ]),
+      ]),
+    );
+  }
+
+  // ── Desktop : ligne tableau ───────────────────────────────────────────────
+  Widget _buildRow(BuildContext context) {
+    final f         = facture;
+    final isInit    = (f.factureType ?? 'extra') == 'initiale';
+    final typeColor = isInit ? const Color(0xFF8B5CF6) : const Color(0xFFF59E0B);
+    final typeLabel = isInit ? 'Fact. Globale' : 'Fact. Suppl.';
+    final statColor = _factureColor(f.statut);
+    final hasPj     = f.urlPdf != null && f.urlPdf!.isNotEmpty;
 
     return Container(
       color: index % 2 == 0 ? Colors.white : const Color(0xFFFAFAFA),
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
       child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-
-        // Type badge
         SizedBox(width: 100, child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-          decoration: BoxDecoration(
-            color: typeColor.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: typeColor.withOpacity(0.3)),
-          ),
+          decoration: BoxDecoration(color: typeColor.withOpacity(0.1), borderRadius: BorderRadius.circular(6), border: Border.all(color: typeColor.withOpacity(0.3))),
           child: Text(typeLabel, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: typeColor), textAlign: TextAlign.center),
         )),
         const SizedBox(width: 8),
-
-        // N° / désignation + phase + tâche
         Expanded(flex: 3, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(f.numero.isNotEmpty ? f.numero : '—', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kTextMain), overflow: TextOverflow.ellipsis),
-          if (f.tacheAssociee.isNotEmpty || f.phaseId != null) ...[
+          if (f.tacheAssociee.isNotEmpty) ...[
             const SizedBox(height: 3),
             Row(children: [
-              if (f.tacheAssociee.isNotEmpty) ...[
-                const Icon(LucideIcons.checkSquare, size: 10, color: kAccent),
-                const SizedBox(width: 3),
-                Flexible(child: Text(f.tacheAssociee, style: const TextStyle(fontSize: 10, color: kAccent, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis)),
-              ],
+              const Icon(LucideIcons.checkSquare, size: 10, color: kAccent),
+              const SizedBox(width: 3),
+              Flexible(child: Text(f.tacheAssociee, style: const TextStyle(fontSize: 10, color: kAccent, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis)),
             ]),
           ],
         ])),
-
-        // Émetteur
         Expanded(flex: 2, child: Text(f.fournisseur.isNotEmpty ? f.fournisseur : (f.chefProjet.isNotEmpty ? f.chefProjet : '—'), style: const TextStyle(fontSize: 12, color: kTextSub), overflow: TextOverflow.ellipsis)),
-
-        // Échéance
         Expanded(flex: 2, child: Text(f.dateEcheance?.isNotEmpty == true ? f.dateEcheance! : '—', style: const TextStyle(fontSize: 12, color: kTextSub))),
-
-        // Montant
         Expanded(flex: 2, child: Text(fmt(f.montant), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: kTextMain), textAlign: TextAlign.right)),
-
-        // Statut
         SizedBox(width: 80, child: Center(child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(color: statColor.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
           child: Text(_factureLabel(f.statut), style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: statColor), textAlign: TextAlign.center),
         ))),
-
-        // Actions : icône pièce jointe + menu
         SizedBox(width: 56, child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          // Bouton pièce jointe — toujours visible, grisé si pas de fichier
           Tooltip(
             message: hasPj ? 'Ouvrir la pièce jointe' : 'Aucune pièce jointe',
             child: GestureDetector(
-              onTap: hasPj
-                  ? () async {
-                      final raw = f.urlPdf!;
-                      if (raw.startsWith('fichier:')) {
-                        // Fichier non uploadé — informer l'utilisateur
-                        _snack(context, 'Fichier local non accessible. Modifiez la facture pour ré-uploader.', const Color(0xFFF59E0B));
-                      } else {
-                        final uri = Uri.tryParse(raw);
-                        if (uri != null) try { await launchUrl(uri, mode: LaunchMode.externalApplication); } catch (_) {}
-                      }
-                    }
-                  : null,
+              onTap: hasPj ? () async {
+                final raw = f.urlPdf!;
+                if (raw.startsWith('fichier:')) {
+                  _snack(context, 'Fichier local non accessible. Modifiez la facture pour ré-uploader.', const Color(0xFFF59E0B));
+                } else {
+                  final uri = Uri.tryParse(raw);
+                  if (uri != null) try { await launchUrl(uri, mode: LaunchMode.externalApplication); } catch (_) {}
+                }
+              } : null,
               child: Container(
                 width: 28, height: 28,
-                decoration: BoxDecoration(
-                  color: hasPj ? const Color(0xFFEFF6FF) : const Color(0xFFF3F4F6),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Icon(
-                  LucideIcons.paperclip,
-                  size: 13,
-                  color: hasPj ? const Color(0xFF3B82F6) : const Color(0xFFD1D5DB),
-                ),
+                decoration: BoxDecoration(color: hasPj ? const Color(0xFFEFF6FF) : const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(6)),
+                child: Icon(LucideIcons.paperclip, size: 13, color: hasPj ? const Color(0xFF3B82F6) : const Color(0xFFD1D5DB)),
               ),
             ),
           ),
@@ -2331,8 +2497,8 @@ class _LigneFacture extends StatelessWidget {
           PopupMenuButton<String>(
             onSelected: (v) { if (v == 'edit') onEdit(); if (v == 'delete') onDelete(); },
             itemBuilder: (_) => [
-              const PopupMenuItem(value: 'edit',   child: Row(children: [Icon(LucideIcons.pencil, size: 13, color: kAccent),  SizedBox(width: 8), Text('Modifier')])),
-              const PopupMenuItem(value: 'delete', child: Row(children: [Icon(LucideIcons.trash2, size: 13, color: kRed),    SizedBox(width: 8), Text('Supprimer', style: TextStyle(color: kRed))])),
+              const PopupMenuItem(value: 'edit',   child: Row(children: [Icon(LucideIcons.pencil, size: 13, color: kAccent), SizedBox(width: 8), Text('Modifier')])),
+              const PopupMenuItem(value: 'delete', child: Row(children: [Icon(LucideIcons.trash2, size: 13, color: kRed),   SizedBox(width: 8), Text('Supprimer', style: TextStyle(color: kRed))])),
             ],
             padding: EdgeInsets.zero,
             child: const Padding(padding: EdgeInsets.all(4), child: Icon(LucideIcons.moreVertical, size: 14, color: kTextSub)),
@@ -2352,9 +2518,61 @@ class _DevisCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final f = facture;
+    final f        = facture;
+    final isMobile = MediaQuery.of(context).size.width < 800;
+    final hasPj    = f.urlPdf != null && f.urlPdf!.isNotEmpty;
+    final statColor = _factureColor(f.statut);
+
+    // Pills (fournisseur, échéance, chef de projet)
+    final pills = <Widget>[
+      if (f.fournisseur.isNotEmpty) ...[_DevisPill(icon: LucideIcons.building2, label: f.fournisseur), const SizedBox(width: 8)],
+      if (f.dateEcheance?.isNotEmpty == true) ...[_DevisPill(icon: LucideIcons.calendar, label: f.dateEcheance!), const SizedBox(width: 8)],
+      if (f.chefProjet.isNotEmpty) _DevisPill(icon: LucideIcons.user, label: f.chefProjet),
+    ];
+
+    // Pièce jointe button
+    Widget pjBtn = hasPj
+        ? GestureDetector(
+            onTap: () async {
+              final uri = Uri.tryParse(f.urlPdf!);
+              if (uri != null) try { await launchUrl(uri, mode: LaunchMode.externalApplication); } catch (_) {}
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEFF6FF),
+                borderRadius: BorderRadius.circular(7),
+                border: Border.all(color: const Color(0xFFBFDBFE)),
+              ),
+              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(LucideIcons.paperclip, size: 12, color: Color(0xFF3B82F6)),
+                SizedBox(width: 5),
+                Text('Pièce jointe', style: TextStyle(fontSize: 11, color: Color(0xFF3B82F6), fontWeight: FontWeight.w600)),
+              ]),
+            ),
+          )
+        : const SizedBox.shrink();
+
+    // Delete button
+    final delBtn = GestureDetector(
+      onTap: onDelete,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFEF2F2),
+          borderRadius: BorderRadius.circular(7),
+          border: Border.all(color: kRed.withOpacity(0.2)),
+        ),
+        child: const Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(LucideIcons.trash2, size: 13, color: kRed),
+          SizedBox(width: 5),
+          Text('Supprimer', style: TextStyle(fontSize: 11, color: kRed, fontWeight: FontWeight.w600)),
+        ]),
+      ),
+    );
+
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
@@ -2362,40 +2580,59 @@ class _DevisCard extends StatelessWidget {
         boxShadow: [BoxShadow(color: const Color(0xFF8B5CF6).withOpacity(0.06), blurRadius: 10, offset: const Offset(0, 3))],
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Container(width: 42, height: 42, decoration: BoxDecoration(color: const Color(0xFF8B5CF6).withOpacity(0.1), borderRadius: BorderRadius.circular(10)), child: const Icon(LucideIcons.fileCheck, size: 20, color: Color(0xFF8B5CF6))),
-          const SizedBox(width: 14),
+        // Ligne titre + montant
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Container(
+            width: 40, height: 40,
+            decoration: BoxDecoration(color: const Color(0xFF8B5CF6).withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
+            child: const Icon(LucideIcons.fileCheck, size: 19, color: Color(0xFF8B5CF6)),
+          ),
+          const SizedBox(width: 12),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(f.numero.isNotEmpty ? f.numero : 'Devis initial', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: kTextMain)),
+            Text(f.numero.isNotEmpty ? f.numero : 'Devis initial',
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: kTextMain)),
             const SizedBox(height: 3),
-            Text('Premier devis estimatif du projet', style: const TextStyle(fontSize: 11, color: kTextSub)),
+            const Text('Premier devis estimatif du projet', style: TextStyle(fontSize: 11, color: kTextSub)),
           ])),
-          // Montant mis en avant
+          const SizedBox(width: 10),
           Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            Text(fmt(f.montant), style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Color(0xFF8B5CF6))),
+            Text(fmt(f.montant),
+                style: TextStyle(fontSize: isMobile ? 16.0 : 20.0, fontWeight: FontWeight.w800, color: const Color(0xFF8B5CF6))),
+            const SizedBox(height: 4),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-              decoration: BoxDecoration(color: _factureColor(f.statut).withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
-              child: Text(_factureLabel(f.statut), style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _factureColor(f.statut))),
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+              decoration: BoxDecoration(color: statColor.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
+              child: Text(_factureLabel(f.statut), style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: statColor)),
             ),
           ]),
         ]),
-        const SizedBox(height: 14),
-        const Divider(height: 1, color: Color(0xFFF3F4F6)),
+
         const SizedBox(height: 12),
-        Row(children: [
-          if (f.fournisseur.isNotEmpty) ...[_DevisPill(icon: LucideIcons.building2, label: f.fournisseur), const SizedBox(width: 8)],
-          if (f.dateEcheance?.isNotEmpty == true) ...[_DevisPill(icon: LucideIcons.calendar, label: f.dateEcheance!), const SizedBox(width: 8)],
-          if (f.chefProjet.isNotEmpty) _DevisPill(icon: LucideIcons.user, label: f.chefProjet),
-          const Spacer(),
-          if (f.urlPdf != null && f.urlPdf!.isNotEmpty)
-            GestureDetector(
-              onTap: () async { final uri = Uri.tryParse(f.urlPdf!); if (uri != null) try { await launchUrl(uri); } catch (_) {} },
-              child: Row(children: [const Icon(LucideIcons.paperclip, size: 12, color: Color(0xFF3B82F6)), const SizedBox(width: 4), const Text('Pièce jointe', style: TextStyle(fontSize: 11, color: Color(0xFF3B82F6), fontWeight: FontWeight.w600))]),
-            ),
-          const SizedBox(width: 8),
-          GestureDetector(onTap: onDelete, child: Container(padding: const EdgeInsets.all(6), decoration: BoxDecoration(color: const Color(0xFFFEF2F2), borderRadius: BorderRadius.circular(7)), child: const Icon(LucideIcons.trash2, size: 13, color: kRed))),
-        ]),
+        const Divider(height: 1, color: Color(0xFFF3F4F6)),
+        const SizedBox(height: 10),
+
+        if (isMobile) ...[
+          // Pills en wrap
+          if (pills.isNotEmpty) ...[
+            Wrap(spacing: 0, runSpacing: 6, children: pills),
+            const SizedBox(height: 10),
+          ],
+          // Actions sur une ligne dédiée
+          Row(children: [
+            pjBtn,
+            const Spacer(),
+            delBtn,
+          ]),
+        ] else ...[
+          // Desktop : tout sur une ligne
+          Row(children: [
+            ...pills,
+            const Spacer(),
+            pjBtn,
+            if (hasPj) const SizedBox(width: 8),
+            delBtn,
+          ]),
+        ],
       ]),
     );
   }
@@ -2471,6 +2708,39 @@ class _FinBtn extends StatelessWidget {
         const SizedBox(width: 6),
         Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: color)),
       ]),
+    ),
+  );
+}
+
+// ── Tuile d'attachement (mobile) ─────────────────────────────────────────────
+class _AttachTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+  const _AttachTile({required this.icon, required this.label, required this.color, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => Expanded(
+    child: GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.07),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: color.withOpacity(0.25)),
+        ),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(color: color.withOpacity(0.12), shape: BoxShape.circle),
+            child: Icon(icon, size: 20, color: color),
+          ),
+          const SizedBox(height: 7),
+          Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: color)),
+        ]),
+      ),
     ),
   );
 }
@@ -2576,34 +2846,26 @@ class _FactureDialogState extends State<_FactureDialog> {
       final file = result.files.first;
       if (file.bytes == null) return;
 
-      // Afficher un indicateur d'upload
       setState(() {
         _pieceJointeNom   = file.name;
         _pieceJointeUrl   = null;
         _pieceJointeBytes = file.bytes;
       });
-
       _snack(context, 'Upload en cours...', kAccent);
 
-      // Upload vers Supabase Storage (bucket "factures")
       try {
         final ext       = file.name.split('.').last.toLowerCase();
         final timestamp = DateTime.now().millisecondsSinceEpoch;
         final path      = 'factures/${widget.project.id}/${timestamp}_${file.name}';
         final mime      = ext == 'pdf' ? 'application/pdf' : 'image/$ext';
-
         await Supabase.instance.client.storage
             .from('factures')
             .uploadBinary(path, file.bytes!, fileOptions: FileOptions(contentType: mime, upsert: true));
-
         final publicUrl = Supabase.instance.client.storage
-            .from('factures')
-            .getPublicUrl(path);
-
+            .from('factures').getPublicUrl(path);
         setState(() => _pieceJointeUrl = publicUrl);
         _snack(context, 'Fichier uploadé ✓', const Color(0xFF10B981));
-      } catch (e) {
-        // Upload échoué → on garde le fichier en local avec son nom
+      } catch (_) {
         setState(() => _pieceJointeUrl = 'fichier:${file.name}');
         _snack(context, 'Upload impossible — fichier enregistré localement', const Color(0xFFF59E0B));
       }
@@ -2678,7 +2940,8 @@ class _FactureDialogState extends State<_FactureDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final isEdit = widget.existing != null;
+    final isEdit   = widget.existing != null;
+    final isMobile = MediaQuery.of(context).size.width < 800;
 
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
@@ -2752,10 +3015,7 @@ class _FactureDialogState extends State<_FactureDialog> {
                     : Row(children: [
                         Container(
                           width: 40, height: 40,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF10B981).withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
+                          decoration: BoxDecoration(color: const Color(0xFF10B981).withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
                           child: const Icon(LucideIcons.fileCheck, size: 18, color: Color(0xFF10B981)),
                         ),
                         const SizedBox(width: 12),
@@ -2765,16 +3025,8 @@ class _FactureDialogState extends State<_FactureDialog> {
                           const Text('Fichier joint ✓', style: TextStyle(fontSize: 11, color: Color(0xFF10B981))),
                         ])),
                         GestureDetector(
-                          onTap: () => setState(() {
-                            _pieceJointeNom   = null;
-                            _pieceJointeUrl   = null;
-                            _pieceJointeBytes = null;
-                          }),
-                          child: Container(
-                            padding: const EdgeInsets.all(6),
-                            decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(6)),
-                            child: const Icon(LucideIcons.x, size: 14, color: kTextSub),
-                          ),
+                          onTap: () => setState(() { _pieceJointeNom = null; _pieceJointeUrl = null; _pieceJointeBytes = null; }),
+                          child: Container(padding: const EdgeInsets.all(6), decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(6)), child: const Icon(LucideIcons.x, size: 14, color: kTextSub)),
                         ),
                       ]),
               ),
@@ -2964,6 +3216,8 @@ class _FactureDialogState extends State<_FactureDialog> {
 // ══════════════════════════════════════════════════════════════════════════════
 //  GANTT
 // ══════════════════════════════════════════════════════════════════════════════
+enum _GanttZoom { month, week }
+
 class _GanttView extends StatefulWidget {
   final List<Tache> taches;
   final List<Phase> phases;
@@ -2974,224 +3228,564 @@ class _GanttView extends StatefulWidget {
 
 class _GanttViewState extends State<_GanttView> {
   final _scrollCtrl = ScrollController();
+  _GanttZoom _zoom  = _GanttZoom.month;
+
   static const _monthNames = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
+  static const Color _hdrDark  = Color(0xFF1F2937);
+  static const Color _hdrAlt   = Color(0xFF263348);
+  static const Color _sepCol   = Color(0xFFE5E7EB);
+  static const Color _greenOk  = Color(0xFF10B981);
+  static const Color _greyNone = Color(0xFF9CA3AF);
+
+  double _chartW = 0;
+  double _todayX = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _doScrollToToday());
+  }
 
   @override
   void dispose() { _scrollCtrl.dispose(); super.dispose(); }
 
+  static DateTime? _d(String? s) {
+    if (s == null || s.isEmpty) return null;
+    try { return DateTime.parse(s); } catch (_) { return null; }
+  }
+
+  // Returns Monday of the week that contains [d]
+  static DateTime _weekStart(DateTime d) =>
+      DateTime(d.year, d.month, d.day).subtract(Duration(days: d.weekday - 1));
+
+  List<DateTime> _buildWeeks(DateTime minDate, DateTime maxDate) {
+    final weeks = <DateTime>[];
+    var w = _weekStart(minDate);
+    while (w.isBefore(maxDate)) {
+      weeks.add(w);
+      w = w.add(const Duration(days: 7));
+    }
+    return weeks;
+  }
+
+  void _doScrollToToday() {
+    if (!mounted || !_scrollCtrl.hasClients || _chartW == 0) return;
+    final target = (_todayX - 120).clamp(0.0, _chartW);
+    _scrollCtrl.animateTo(target, duration: const Duration(milliseconds: 500), curve: Curves.easeInOut);
+  }
+
+  void _setZoom(_GanttZoom z) {
+    if (_zoom == z) return;
+    _scrollCtrl.jumpTo(0);
+    setState(() => _zoom = z);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _doScrollToToday());
+  }
+
   @override
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.of(context).size.width < 800;
-    final labelW   = isMobile ? 130.0 : 180.0;
-    final rowH     = isMobile ? 44.0  : 48.0;
-    final colW     = isMobile ? 70.0  : 80.0;
+    final labelW  = isMobile ? 110.0 : 190.0;
+    final rowH    = isMobile ? 38.0  : 46.0;
+    final phH     = isMobile ? 28.0  : 34.0;
+    final hdrH    = isMobile ? 52.0  : 62.0;
+    final fsMain  = isMobile ? 10.0  : 12.0;
+    final fsSub   = isMobile ? 8.0   : 10.0;
+    final minColW = _zoom == _GanttZoom.week
+        ? (isMobile ? 26.0 : 38.0)
+        : (isMobile ? 52.0 : 70.0);
 
-    final withDates    = widget.taches.where((t) => t.dateDebut != null && t.dateFin != null).toList()..sort((a, b) => a.dateDebut!.compareTo(b.dateDebut!));
-    final withoutDates = widget.taches.where((t) => t.dateDebut == null || t.dateFin == null).toList();
+    final withDates = widget.taches.where((t) =>
+        _d(t.dateDebut) != null && _d(t.dateFin) != null,
+    ).toList()..sort((a, b) => a.dateDebut!.compareTo(b.dateDebut!));
+    final withoutDates = widget.taches
+        .where((t) => _d(t.dateDebut) == null || _d(t.dateFin) == null)
+        .toList();
 
     if (withDates.isEmpty) {
       return Container(
-        padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB))),
-        child: const Column(children: [
-          Icon(LucideIcons.calendarOff, size: 36, color: kTextSub),
+        padding: const EdgeInsets.all(28),
+        decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: _sepCol)),
+        child: const Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(LucideIcons.calendarOff, size: 38, color: kTextSub),
           SizedBox(height: 12),
-          Text('Aucune tâche avec des dates', style: TextStyle(color: kTextSub, fontSize: 14)),
+          Text('Aucune tâche avec des dates',
+              style: TextStyle(color: kTextSub, fontSize: 14, fontWeight: FontWeight.w600)),
           SizedBox(height: 6),
-          Text('Ajoutez des dates à vos tâches pour afficher le Gantt', style: TextStyle(color: kTextSub, fontSize: 12), textAlign: TextAlign.center),
+          Text('Ajoutez des dates de début et fin à vos tâches pour afficher le diagramme de Gantt',
+              style: TextStyle(color: kTextSub, fontSize: 12), textAlign: TextAlign.center),
         ]),
       );
     }
 
-    DateTime minDate = withDates.map((t) => DateTime.parse(t.dateDebut!)).reduce((a, b) => a.isBefore(b) ? a : b);
-    DateTime maxDate = withDates.map((t) => DateTime.parse(t.dateFin!)).reduce((a, b) => a.isAfter(b) ? a : b);
+    DateTime minDate = withDates.map((t) => _d(t.dateDebut)!).reduce((a, b) => a.isBefore(b) ? a : b);
+    DateTime maxDate = withDates.map((t) => _d(t.dateFin)!).reduce((a, b) => a.isAfter(b) ? a : b);
     minDate = DateTime(minDate.year, minDate.month, 1);
     maxDate = DateTime(maxDate.year, maxDate.month + 1, 1);
-    final totalDays = maxDate.difference(minDate).inDays;
+    final totalDays = maxDate.difference(minDate).inDays.clamp(1, 99999);
 
     final months = <DateTime>[];
     var cur = DateTime(minDate.year, minDate.month, 1);
     while (cur.isBefore(maxDate)) { months.add(cur); cur = DateTime(cur.year, cur.month + 1, 1); }
 
-    final chartW   = (months.length * colW).clamp(300.0, 1400.0);
-    final totalW   = labelW + chartW;
-    final today    = DateTime.now();
-    final todayInRange = today.isAfter(minDate) && today.isBefore(maxDate);
+    final weeks   = _buildWeeks(minDate, maxDate);
+    final today   = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
+    final inRange = today.isAfter(minDate.subtract(const Duration(days: 1))) && today.isBefore(maxDate);
 
-    void scrollToToday() {
-      final offset = (labelW + (today.difference(minDate).inDays / totalDays) * chartW - 100).clamp(0.0, totalW);
-      _scrollCtrl.animateTo(offset, duration: const Duration(milliseconds: 400), curve: Curves.easeInOut);
-    }
-
+    // ── Shell ─────────────────────────────────────────────────────────────
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 6, offset: const Offset(0, 2))],
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 2))],
       ),
       clipBehavior: Clip.hardEdge,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // ── Header ─────────────────────────────────────────────────────────
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 12, 10),
+
+        // ── Title bar ─────────────────────────────────────────────────────
+        Container(
+          color: _hdrDark,
+          padding: EdgeInsets.symmetric(horizontal: 14, vertical: isMobile ? 8 : 10),
           child: Row(children: [
-            const Icon(LucideIcons.barChart2, size: 16, color: kTextSub),
+            const Icon(LucideIcons.barChart2, size: 15, color: Colors.white70),
             const SizedBox(width: 8),
-            const Expanded(child: Text('Diagramme de Gantt', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: kTextMain))),
-            if (todayInRange)
-              TextButton.icon(
-                onPressed: scrollToToday,
-                icon: const Icon(LucideIcons.target, size: 13, color: kAccent),
-                label: const Text("Aujourd'hui", style: TextStyle(color: kAccent, fontSize: 12, fontWeight: FontWeight.w600)),
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  backgroundColor: kAccent.withOpacity(0.08),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
+            Expanded(child: Text('Diagramme de Gantt',
+                style: TextStyle(fontWeight: FontWeight.w700,
+                    fontSize: isMobile ? 13.0 : 14.0, color: Colors.white))),
+            // Zoom toggle
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.white24),
               ),
-          ]),
-        ),
-        // ── Chart ──────────────────────────────────────────────────────────
-        SingleChildScrollView(
-          controller: _scrollCtrl,
-          scrollDirection: Axis.horizontal,
-          child: SizedBox(width: totalW, child: Column(children: [
-            // Month header
-            Container(color: const Color(0xFF1F2937), child: Row(children: [
-              Container(
-                width: labelW,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                decoration: const BoxDecoration(border: Border(right: BorderSide(color: Color(0xFF374151)))),
-                child: Text('Tâche', style: TextStyle(color: Colors.white, fontSize: isMobile ? 10 : 12, fontWeight: FontWeight.w700)),
-              ),
-              Expanded(child: Column(children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 5),
-                  child: Text('Timeline', style: TextStyle(color: Colors.white70, fontSize: isMobile ? 9 : 11, fontWeight: FontWeight.w600)),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                _zoomBtn('Mois', _GanttZoom.month),
+                _zoomBtn('Sem.', _GanttZoom.week),
+              ]),
+            ),
+            const SizedBox(width: 8),
+            // Aujourd'hui button
+            GestureDetector(
+              onTap: _doScrollToToday,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: inRange ? kRed.withOpacity(0.18) : Colors.white.withOpacity(0.07),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: inRange ? kRed.withOpacity(0.5) : Colors.white24),
                 ),
-                SizedBox(height: 24, child: LayoutBuilder(builder: (ctx2, cs2) {
-                  final W = cs2.maxWidth;
-                  return Stack(children: months.map((m) {
-                    final s = m.difference(minDate).inDays / totalDays;
-                    final e = DateTime(m.year, m.month + 1, 1).difference(minDate).inDays / totalDays;
-                    return Positioned(
-                      left: (s * W).clamp(0.0, W), width: ((e - s) * W).clamp(0.0, W), top: 0, bottom: 0,
-                      child: Container(
-                        decoration: const BoxDecoration(border: Border(left: BorderSide(color: Color(0xFF374151), width: 0.5))),
-                        alignment: Alignment.center,
-                        child: Text('${_monthNames[m.month - 1]} ${m.year}',
-                            style: const TextStyle(color: Colors.white60, fontSize: 9, fontWeight: FontWeight.w500)),
-                      ),
-                    );
-                  }).toList());
-                })),
-              ])),
-            ])),
-            // Rows
-            ..._buildGanttRows(withDates, widget.phases, minDate, totalDays, months, labelW, rowH),
-            // Footer — tasks without dates
-            if (withoutDates.isNotEmpty) ...[
-              Container(height: 1, color: const Color(0xFFE5E7EB)),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                child: Row(children: [
-                  const Icon(LucideIcons.alertCircle, size: 12, color: kTextSub),
-                  const SizedBox(width: 6),
-                  Text('${withoutDates.length} tâche(s) sans dates', style: const TextStyle(color: kTextSub, fontSize: 12)),
-                  const SizedBox(width: 8),
-                  Wrap(spacing: 6, children: withoutDates.map((t) => Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(10)),
-                    child: Text(t.titre, style: const TextStyle(fontSize: 11, color: kTextSub)),
-                  )).toList()),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(LucideIcons.target, size: 12, color: inRange ? kRed : Colors.white60),
+                  const SizedBox(width: 5),
+                  Text("Auj.", style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
+                      color: inRange ? kRed : Colors.white60)),
                 ]),
               ),
+            ),
+          ]),
+        ),
+
+        // ── Chart (LayoutBuilder for dynamic column width) ─────────────────
+        LayoutBuilder(builder: (ctx, cs) {
+          final columns = _zoom == _GanttZoom.week ? weeks : months;
+          final availW  = (cs.maxWidth - labelW).clamp(1.0, double.infinity);
+          final colW    = columns.isEmpty ? minColW : (availW / columns.length).clamp(minColW, 300.0);
+          final chartW  = colW * columns.length;
+          final todayX  = inRange
+              ? (today.difference(minDate).inDays / totalDays * chartW).clamp(0.0, chartW)
+              : 0.0;
+
+          _chartW = chartW;
+          _todayX = todayX;
+
+          // ── grid separators ───────────────────────────────────────────────
+          List<Widget> gridSeps() {
+            final seps = <Widget>[];
+            for (final c in columns) {
+              final x = c.difference(minDate).inDays / totalDays * chartW;
+              if (x > 0) {
+                seps.add(Positioned(
+                    left: x, top: 0, bottom: 0, width: 0.5,
+                    child: Container(color: _sepCol)));
+              }
+            }
+            return seps;
+          }
+
+          // ── today vertical line — always Positioned so Stack fills to chartW ─
+          // IMPORTANT: returning a non-Positioned widget (SizedBox.shrink) when
+          // inRange=false would make the Stack shrink-wrap to 0 width, hiding
+          // all task bars. We always return Positioned, off-screen when not needed.
+          Widget todayLine() => inRange
+              ? Positioned(
+                  left: todayX, top: 0, bottom: 0, width: 2,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: kRed,
+                      boxShadow: [BoxShadow(color: kRed.withOpacity(0.35), blurRadius: 4, spreadRadius: 1)],
+                    ),
+                  ))
+              : const Positioned(left: -100, top: 0, bottom: 0, width: 0, child: SizedBox.shrink());
+
+          // ── row builders ─────────────────────────────────────────────────
+          final labelRows = <Widget>[];
+          final chartRows = <Widget>[];
+          int rowIdx = 0;
+
+          void addPhaseRow(String nom, Color phColor) {
+            labelRows.add(Container(
+              height: phH,
+              decoration: BoxDecoration(
+                color: phColor.withOpacity(0.07),
+                border: Border(
+                    left: BorderSide(color: phColor, width: 3),
+                    right: const BorderSide(color: _sepCol)),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              alignment: Alignment.centerLeft,
+              child: Row(children: [
+                Container(width: 6, height: 6,
+                    decoration: BoxDecoration(color: phColor, shape: BoxShape.circle)),
+                const SizedBox(width: 6),
+                Expanded(child: Text(nom,
+                    style: TextStyle(fontSize: fsSub, fontWeight: FontWeight.w700, color: kTextMain),
+                    overflow: TextOverflow.ellipsis)),
+              ]),
+            ));
+            chartRows.add(SizedBox(height: phH, child: Stack(children: [
+              Positioned.fill(child: Container(color: phColor.withOpacity(0.04))),
+              ...gridSeps(),
+              todayLine(),
+            ])));
+          }
+
+          void addTaskRow(Tache t) {
+            final debut  = _d(t.dateDebut)!;
+            final fin    = _d(t.dateFin)!;
+            final daysL  = debut.difference(minDate).inDays;
+            final daysW  = fin.difference(debut).inDays + 1;
+            final barL   = (daysL / totalDays * chartW).clamp(0.0, chartW);
+            final barW   = (daysW / totalDays * chartW).clamp(6.0, chartW - barL);
+            final pct    = t.statut == 'termine' ? 1.0 : t.statut == 'en_cours' ? 0.5 : 0.0;
+            final color  = _tacheColor(t.statut);
+            final bg     = rowIdx % 2 == 0 ? Colors.white : const Color(0xFFFAFAFB);
+            rowIdx++;
+
+            final pctLabel = '${(pct * 100).toInt()}%';
+            labelRows.add(Container(
+              height: rowH,
+              decoration: BoxDecoration(
+                  color: bg, border: const Border(right: BorderSide(color: _sepCol))),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              alignment: Alignment.centerLeft,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Row(children: [
+                    Expanded(
+                      child: Text(t.titre,
+                          style: TextStyle(
+                              fontSize: fsMain - 1,
+                              fontWeight: FontWeight.w600,
+                              color: kTextMain),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1),
+                    ),
+                    const SizedBox(width: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                      decoration: BoxDecoration(
+                          color: color.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(4)),
+                      child: Text(pctLabel,
+                          style: TextStyle(
+                              fontSize: fsSub - 1,
+                              fontWeight: FontWeight.w700,
+                              color: color)),
+                    ),
+                  ]),
+                  if (!isMobile) Row(children: [
+                    Container(width: 5, height: 5,
+                        margin: const EdgeInsets.only(right: 4),
+                        decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+                    Text(_tacheLabel(t.statut),
+                        style: TextStyle(fontSize: fsSub - 1, color: color)),
+                  ]),
+                ],
+              ),
+            ));
+
+            chartRows.add(Container(
+              height: rowH, color: bg,
+              child: Stack(children: [
+                ...gridSeps(),
+                // background bar
+                Positioned(
+                    left: barL, top: rowH * 0.27, height: rowH * 0.46, width: barW,
+                    child: Container(
+                        decoration: BoxDecoration(
+                            color: color.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(5),
+                            border: Border.all(color: color.withOpacity(0.3), width: 0.5)))),
+                // progress fill
+                if (pct > 0)
+                  Positioned(
+                      left: barL, top: rowH * 0.27, height: rowH * 0.46,
+                      width: (barW * pct).clamp(4.0, barW),
+                      child: Container(
+                          decoration: BoxDecoration(
+                              color: color,
+                              borderRadius: BorderRadius.circular(5)))),
+                // today line on top of bar
+                todayLine(),
+              ]),
+            ));
+          }
+
+          // populate rows
+          for (final ph in widget.phases) {
+            final phT = withDates.where((t) => t.phaseId == ph.id).toList();
+            if (phT.isEmpty) continue;
+            final prog  = phT.where((t) => t.statut == 'termine').length / phT.length;
+            final color = prog == 1.0 ? _greenOk : prog > 0 ? kAccent : _greyNone;
+            addPhaseRow(ph.nom, color);
+            phT.forEach(addTaskRow);
+          }
+          final sansPh = withDates
+              .where((t) => t.phaseId == null || t.phaseId!.isEmpty)
+              .toList();
+          if (sansPh.isNotEmpty) {
+            if (widget.phases.any((p) => withDates.any((t) => t.phaseId == p.id))) {
+              addPhaseRow('Sans phase', _greyNone);
+            }
+            sansPh.forEach(addTaskRow);
+          }
+
+          // ── header ────────────────────────────────────────────────────────
+          Widget chartHeader;
+          if (_zoom == _GanttZoom.month) {
+            // Single-row month header
+            chartHeader = SizedBox(height: hdrH, child: Stack(children: [
+              ...months.asMap().entries.map((e) {
+                final i = e.key; final m = e.value;
+                final x   = m.difference(minDate).inDays / totalDays * chartW;
+                final nxt = i + 1 < months.length
+                    ? months[i + 1].difference(minDate).inDays / totalDays * chartW
+                    : chartW;
+                return Positioned(
+                  left: x, width: (nxt - x).clamp(0.0, chartW), top: 0, bottom: 0,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: i % 2 == 0 ? _hdrDark : _hdrAlt,
+                      border: const Border(left: BorderSide(color: Color(0xFF374151), width: 0.5)),
+                    ),
+                    alignment: Alignment.center,
+                    child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                      Text(_monthNames[m.month - 1],
+                          style: TextStyle(color: Colors.white, fontSize: fsSub + 1, fontWeight: FontWeight.w700)),
+                      Text('${m.year}',
+                          style: TextStyle(color: Colors.white54, fontSize: fsSub - 1)),
+                    ]),
+                  ),
+                );
+              }),
+              // today marker in header
+              if (inRange) ...[
+                Positioned(left: todayX, top: 0, bottom: 0, width: 2, child: Container(color: kRed)),
+                Positioned(
+                  left: (todayX - 14).clamp(0.0, chartW - 32), top: 6, width: 32,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+                    decoration: BoxDecoration(color: kRed, borderRadius: BorderRadius.circular(4)),
+                    child: Text('${today.day}/${today.month}',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.white, fontSize: 7, fontWeight: FontWeight.w800)),
+                  ),
+                ),
+              ],
+            ]));
+          } else {
+            // Two-row week header: month band on top, week columns below
+            final topH = hdrH * 0.40;
+            final botH = hdrH * 0.60;
+            chartHeader = SizedBox(height: hdrH, child: Column(children: [
+              // top: month bands
+              SizedBox(height: topH, child: Stack(children: [
+                ...months.asMap().entries.map((e) {
+                  final i = e.key; final m = e.value;
+                  final x   = m.difference(minDate).inDays / totalDays * chartW;
+                  final nxt = i + 1 < months.length
+                      ? months[i + 1].difference(minDate).inDays / totalDays * chartW
+                      : chartW;
+                  return Positioned(
+                    left: x.clamp(0.0, chartW),
+                    width: (nxt - x.clamp(0.0, chartW)).clamp(0.0, chartW),
+                    top: 0, bottom: 0,
+                    child: Container(
+                      color: i % 2 == 0 ? _hdrDark : _hdrAlt,
+                      alignment: Alignment.centerLeft,
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      child: Text(
+                        '${_monthNames[m.month - 1]} ${m.year}',
+                        style: TextStyle(color: Colors.white, fontSize: fsSub, fontWeight: FontWeight.w700),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  );
+                }),
+              ])),
+              // bottom: week columns
+              SizedBox(height: botH, child: Stack(children: [
+                ...weeks.asMap().entries.map((e) {
+                  final i = e.key; final w = e.value;
+                  final x   = w.difference(minDate).inDays / totalDays * chartW;
+                  final nxt = i + 1 < weeks.length
+                      ? weeks[i + 1].difference(minDate).inDays / totalDays * chartW
+                      : chartW;
+                  final clX = x.clamp(0.0, chartW);
+                  final clW = (nxt - clX).clamp(0.0, chartW);
+                  return Positioned(
+                    left: clX, width: clW, top: 0, bottom: 0,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: i % 2 == 0 ? const Color(0xFF263348) : const Color(0xFF1E2A3A),
+                        border: const Border(left: BorderSide(color: Color(0xFF374151), width: 0.5)),
+                      ),
+                      alignment: Alignment.center,
+                      child: clW > 24
+                          ? Text('${w.day}/${w.month}',
+                              style: TextStyle(color: Colors.white70, fontSize: fsSub - 1,
+                                  fontWeight: FontWeight.w600))
+                          : const SizedBox.shrink(),
+                    ),
+                  );
+                }),
+                // today marker
+                if (inRange) ...[
+                  Positioned(left: todayX, top: 0, bottom: 0, width: 2, child: Container(color: kRed)),
+                  Positioned(
+                    left: (todayX - 12).clamp(0.0, chartW - 28), top: 3, width: 28,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+                      decoration: BoxDecoration(color: kRed, borderRadius: BorderRadius.circular(4)),
+                      child: Text('${today.day}/${today.month}',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Colors.white, fontSize: 7, fontWeight: FontWeight.w800)),
+                    ),
+                  ),
+                ],
+              ])),
+            ]));
+          }
+
+          // ── assemble fixed-label + scrollable chart ───────────────────────
+          return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            // Fixed label column
+            SizedBox(
+              width: labelW,
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Container(
+                  height: hdrH,
+                  decoration: const BoxDecoration(
+                      color: _hdrDark,
+                      border: Border(right: BorderSide(color: Color(0xFF374151)))),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  alignment: Alignment.centerLeft,
+                  child: Text('Tâche',
+                      style: TextStyle(color: Colors.white, fontSize: fsMain, fontWeight: FontWeight.w700)),
+                ),
+                ...labelRows,
+              ]),
+            ),
+            // Scrollable timeline with always-visible scrollbar
+            Expanded(child: Scrollbar(
+              controller: _scrollCtrl,
+              thumbVisibility: true,
+              interactive: true,
+              child: SingleChildScrollView(
+                controller: _scrollCtrl,
+                scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
+                child: SizedBox(width: chartW, child: Column(children: [
+                  chartHeader,
+                  ...chartRows,
+                  const SizedBox(height: 10), // space for scrollbar thumb
+                ])),
+              ),
+            )),
+          ]);
+        }),
+
+        // ── Tasks without dates ────────────────────────────────────────────
+        if (withoutDates.isNotEmpty) ...[
+          Container(height: 1, color: _sepCol),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Wrap(spacing: 6, runSpacing: 4, children: [
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(LucideIcons.alertCircle, size: 12, color: kTextSub),
+                const SizedBox(width: 5),
+                Text('${withoutDates.length} tâche(s) sans dates :',
+                    style: const TextStyle(color: kTextSub, fontSize: 11)),
+              ]),
+              ...withoutDates.map((t) => Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                    color: const Color(0xFFF3F4F6),
+                    borderRadius: BorderRadius.circular(10)),
+                child: Text(t.titre, style: const TextStyle(fontSize: 10, color: kTextSub)),
+              )),
+            ]),
+          ),
+        ],
+
+        // ── Legend ────────────────────────────────────────────────────────
+        Container(
+          padding: EdgeInsets.symmetric(horizontal: 14, vertical: isMobile ? 7 : 9),
+          decoration: const BoxDecoration(border: Border(top: BorderSide(color: _sepCol))),
+          child: Row(children: [
+            _legendItem(_greyNone, 'Pas commencé'),
+            const SizedBox(width: 12),
+            _legendItem(kAccent, 'En cours'),
+            const SizedBox(width: 12),
+            _legendItem(_greenOk, 'Terminé'),
+            const Spacer(),
+            if (inRange) ...[
+              Container(width: 14, height: 2, color: kRed),
+              const SizedBox(width: 5),
+              Text("Aujourd'hui", style: TextStyle(fontSize: fsSub, color: kTextSub)),
             ],
-          ])),
+          ]),
         ),
       ]),
     );
   }
 
-  List<Widget> _buildGanttRows(
-    List<Tache> withDates, List<Phase> phases,
-    DateTime minDate, int totalDays, List<DateTime> months,
-    double labelW, double rowH,
-  ) {
-    final rows  = <Widget>[];
-    final today = DateTime.now();
+  Widget _zoomBtn(String label, _GanttZoom mode) => GestureDetector(
+    onTap: () => _setZoom(mode),
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: _zoom == mode ? Colors.white.withOpacity(0.2) : Colors.transparent,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(label, style: TextStyle(
+          color: _zoom == mode ? Colors.white : Colors.white54,
+          fontSize: 11,
+          fontWeight: FontWeight.w600)),
+    ),
+  );
 
-    void addTacheRow(Tache t, int i) {
-      final debut = DateTime.parse(t.dateDebut!);
-      final fin   = DateTime.parse(t.dateFin!);
-      final pct   = t.statut == 'termine' ? 100 : t.statut == 'en_cours' ? 65 : 0;
-      final color = _tacheColor(t.statut);
-      rows.add(Container(
-        height: rowH,
-        color: i % 2 == 0 ? Colors.white : const Color(0xFFFAFAFA),
-        child: Row(children: [
-          Container(
-            width: labelW,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: const BoxDecoration(border: Border(right: BorderSide(color: Color(0xFFE5E7EB)))),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center, children: [
-              Text(t.titre, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: kTextMain), overflow: TextOverflow.ellipsis),
-              if (t.description.isNotEmpty)
-                Text(t.description, style: const TextStyle(fontSize: 9, color: kTextSub), overflow: TextOverflow.ellipsis),
-            ]),
-          ),
-          Expanded(child: LayoutBuilder(builder: (ctx, cs) {
-            final W    = cs.maxWidth;
-            final barL = ((debut.difference(minDate).inDays / totalDays) * W).clamp(0.0, W);
-            final barW = (((fin.difference(debut).inDays + 1) / totalDays) * W).clamp(8.0, W - barL);
-            final todayX = ((today.difference(minDate).inDays / totalDays) * W).clamp(0.0, W);
-            return Stack(children: [
-              ...months.map((m) { final mx = (m.difference(minDate).inDays / totalDays * W).clamp(0.0, W); return Positioned(left: mx, top: 0, bottom: 0, width: 0.5, child: Container(color: const Color(0xFFE5E7EB))); }),
-              if (todayX > 0 && todayX < W) Positioned(left: todayX, top: 0, bottom: 0, width: 2, child: Container(color: kRed.withOpacity(0.5))),
-              Positioned(left: barL, top: 10, bottom: 10, width: barW, child: Container(decoration: BoxDecoration(color: const Color(0xFFE5E7EB), borderRadius: BorderRadius.circular(4)))),
-              Positioned(left: barL, top: 10, bottom: 10, width: (barW * pct / 100).clamp(0.0, barW), child: Container(decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(4)))),
-              Positioned(left: barL, top: 0, bottom: 0, width: barW, child: Center(child: Text('$pct%', style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w700, shadows: [Shadow(color: Colors.black26, blurRadius: 2)])))),
-            ]);
-          })),
-        ]),
-      ));
-    }
-
-    void addPhaseHeader(String nom, Color color) {
-      rows.add(Container(
-        color: const Color(0xFFF3F4F6),
-        child: Row(children: [
-          Container(
-            width: labelW,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            decoration: const BoxDecoration(border: Border(right: BorderSide(color: Color(0xFFE5E7EB)))),
-            child: Row(children: [
-              Container(width: 7, height: 7, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2))),
-              const SizedBox(width: 7),
-              Expanded(child: Text(nom, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: kTextMain), overflow: TextOverflow.ellipsis)),
-            ]),
-          ),
-          const Expanded(child: SizedBox(height: 30)),
-        ]),
-      ));
-    }
-
-    for (final ph in phases) {
-      final phTaches = withDates.where((t) => t.phaseId == ph.id).toList();
-      if (phTaches.isEmpty) continue;
-      final prog  = phTaches.where((t) => t.statut == 'termine').length / phTaches.length;
-      final color = prog == 1.0 ? const Color(0xFF10B981) : prog > 0 ? kAccent : const Color(0xFF9CA3AF);
-      addPhaseHeader(ph.nom, color);
-      for (int i = 0; i < phTaches.length; i++) addTacheRow(phTaches[i], i);
-    }
-    final sansPh = withDates.where((t) => t.phaseId == null || t.phaseId!.isEmpty).toList();
-    if (sansPh.isNotEmpty) {
-      addPhaseHeader('Sans phase', const Color(0xFF9CA3AF));
-      for (int i = 0; i < sansPh.length; i++) addTacheRow(sansPh[i], i);
-    }
-    return rows;
-  }
+  Widget _legendItem(Color color, String label) => Row(mainAxisSize: MainAxisSize.min, children: [
+    Container(width: 10, height: 10,
+        decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(3))),
+    const SizedBox(width: 5),
+    Text(label, style: const TextStyle(fontSize: 10, color: kTextSub)),
+  ]);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

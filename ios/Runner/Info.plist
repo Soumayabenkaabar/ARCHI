@@ -49,6 +49,12 @@
 	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Pour photographier vos factures et pièces jointes</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Pour joindre une photo de facture depuis votre galerie</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Pour enregistrer des photos de factures</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
