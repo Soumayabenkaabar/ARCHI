@@ -83,7 +83,9 @@ class ProjetResume {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key});
+  final VoidCallback? onNavigateToProjects;
+  final Function(Project)? onViewProject;
+  const DashboardScreen({super.key, this.onNavigateToProjects, this.onViewProject});
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -175,8 +177,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         alertesBudget:   budgetCount,
         alertesRetard:   retardCount,
       );
-      // Affiche les 4 notifications les plus récentes (lues ou non)
-      _notifications = allNotifs.take(4).toList();
+      // Affiche uniquement les notifications non lues, triées par date décroissante
+      _notifications = allNotifs.where((n) => !n.lue).toList();
     });
   }
 
@@ -280,7 +282,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         if (_notifications.isNotEmpty) ...[
                           _buildSectionTitle(
                             LucideIcons.bell,
-                            'Notifications récentes',
+                            'Notifications non lues',
                             kAccent,
                           ),
                           const SizedBox(height: 12),
@@ -365,8 +367,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         iconBg: const Color(0xFFEAF3DE),
         iconColor: const Color(0xFF3B6D11),
         value: _formatMoney(s.budgetDepense),
-        valueSuffix: ' MAD',
-        sub1Text: 'Sur ${_formatMoney(s.budgetTotal)} MAD',
+        valueSuffix: ' DT',
+        sub1Text: 'Sur ${_formatMoney(s.budgetTotal)} DT',
         sub1Color: kTextSub,
       ),
       _KpiCard(
@@ -459,12 +461,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             TextButton(
             onPressed: () {
-  Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (_) => const ProjetsScreen(),
-    ),
-  );
+  if (widget.onNavigateToProjects != null) {
+    widget.onNavigateToProjects!();
+  } else {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) =>  ProjetsScreen()),
+    );
+  }
 },
               style: TextButton.styleFrom(
                 padding:
@@ -519,7 +523,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       .map(
                         (p) => SizedBox(
                           width: (constraints.maxWidth - 12) / 2,
-                          child: _ProjectCard(projet: p),
+                          child: _ProjectCard(projet: p, onViewProject: widget.onViewProject),
                         ),
                       )
                       .toList(),
@@ -530,7 +534,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     .map(
                       (p) => Padding(
                         padding: const EdgeInsets.only(bottom: 12),
-                        child: _ProjectCard(projet: p),
+                        child: _ProjectCard(projet: p, onViewProject: widget.onViewProject),
                       ),
                     )
                     .toList(),
@@ -801,7 +805,8 @@ class _AlertCard extends StatelessWidget {
 
 class _ProjectCard extends StatelessWidget {
   final ProjetResume projet;
-  const _ProjectCard({required this.projet});
+  final Function(Project)? onViewProject;
+  const _ProjectCard({required this.projet, this.onViewProject});
 
   @override
   Widget build(BuildContext context) {
@@ -829,15 +834,20 @@ class _ProjectCard extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(14),
        onTap: () {
-  Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (_) => ProjetDetailScreen(
-        project: projet.toProject(),
-        projectIndex: 0,
+  final project = projet.toProject();
+  if (onViewProject != null) {
+    onViewProject!(project);
+  } else {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ProjetDetailScreen(
+          project: project,
+          projectIndex: 0,
+        ),
       ),
-    ),
-  );
+    );
+  }
 },
           child: Padding(
             padding: const EdgeInsets.all(16),
@@ -926,32 +936,55 @@ class _ProjectCard extends StatelessWidget {
                     minHeight: 6,
                   ),
                 ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 6,
+                const SizedBox(height: 10),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    _Meta(
-                      icon: Icons.attach_money_rounded,
-                      label:
-                          '${_fmt(projet.budgetDepense)} / ${_fmt(projet.budgetTotal)} MAD',
-                      color: budgetAlert ? kRed : kTextSub,
+                    const Text('Budget',
+                        style: TextStyle(color: kTextSub, fontSize: 12)),
+                    Text(
+                      '${_fmt(projet.budgetDepense)} / ${_fmt(projet.budgetTotal)} DT',
+                      style: TextStyle(
+                        color: budgetAlert ? kRed : kTextSub,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                    if (projet.dateFin != null)
-                      _Meta(
-                        icon: Icons.calendar_today_outlined,
-                        label: projet.dateFin!,
-                        color: kTextSub,
-                      ),
-                    if (projet.taches > 0)
-                      _Meta(
-                        icon: Icons.task_alt_outlined,
-                        label:
-                            '${projet.taches} tâche${projet.taches > 1 ? 's' : ''}',
-                        color: kTextSub,
-                      ),
                   ],
                 ),
+                const SizedBox(height: 5),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: budgetRatio,
+                    backgroundColor: const Color(0xFFF0F0F0),
+                    valueColor: AlwaysStoppedAnimation(
+                        budgetAlert ? kRed : kGreen),
+                    minHeight: 6,
+                  ),
+                ),
+                if (projet.dateFin != null || projet.taches > 0) ...[
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 6,
+                    children: [
+                      if (projet.dateFin != null)
+                        _Meta(
+                          icon: Icons.calendar_today_outlined,
+                          label: projet.dateFin!,
+                          color: kTextSub,
+                        ),
+                      if (projet.taches > 0)
+                        _Meta(
+                          icon: Icons.task_alt_outlined,
+                          label:
+                              '${projet.taches} tâche${projet.taches > 1 ? 's' : ''}',
+                          color: kTextSub,
+                        ),
+                    ],
+                  ),
+                ],
               ],
             ),
           ),

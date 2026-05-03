@@ -5,6 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'constants/colors.dart';
 import 'models/nav_item.dart';
+import 'models/project.dart';
 import 'service/notification_service.dart';
 import 'screens/analytics_screen.dart';
 import 'screens/carte_screen.dart';
@@ -12,6 +13,7 @@ import 'screens/clients_screen.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/equipe_screen.dart';
 import 'screens/notifications_screen.dart';
+import 'screens/projet_detail_screen.dart';
 import 'screens/projets_screen.dart';
 import 'screens/splash_screen.dart';
 import 'screens/login_screen.dart';
@@ -70,6 +72,7 @@ class _AppShell extends StatefulWidget {
 class _AppShellState extends State<_AppShell> {
   int _selectedIndex = 0;
   int _notifCount    = 0;
+  Project? _detailProject;
 
   @override
   void initState() {
@@ -84,8 +87,14 @@ class _AppShellState extends State<_AppShell> {
 
   Widget _buildPage(int index) {
     switch (index) {
-      case 0:  return const DashboardScreen();
-      case 1:  return const ProjetsScreen();
+      case 0:  return DashboardScreen(
+        onNavigateToProjects: () => setState(() {
+          _selectedIndex = 1;
+          _detailProject = null;
+        }),
+        onViewProject: (p) => setState(() => _detailProject = p),
+      );
+      case 1:  return ProjetsScreen(onViewProject: (p) => setState(() => _detailProject = p));
       case 2:  return const ClientsScreen();
       case 3:  return const EquipeScreen();
       case 4:  return const AnalyticsScreen();
@@ -108,17 +117,28 @@ class _AppShellState extends State<_AppShell> {
     final notifCount = _notifCount;
     final architecte = AuthService.currentUser;
 
+    final mainContent = _detailProject != null
+        ? ProjetDetailScreen(
+            project: _detailProject!,
+            projectIndex: 0,
+            onBack: () => setState(() => _detailProject = null),
+          )
+        : _buildPage(_selectedIndex);
+
     if (isWide) {
       return Scaffold(
         body: Row(children: [
           SidebarWidget(
             selectedIndex: _selectedIndex,
-            onSelect: (i) => setState(() => _selectedIndex = i),
+            onSelect: (i) => setState(() {
+              _selectedIndex = i;
+              _detailProject = null;
+            }),
             notifCount: notifCount,
             architecteNom: architecte?.fullName ?? 'Architecte',
             onLogout: _logout,
           ),
-          Expanded(child: _buildPage(_selectedIndex)),
+          Expanded(child: mainContent),
         ]),
       );
     }
@@ -145,7 +165,10 @@ class _AppShellState extends State<_AppShell> {
           Stack(children: [
             IconButton(
               icon: const Icon(LucideIcons.bell, color: Colors.white70, size: 20),
-              onPressed: () => setState(() => _selectedIndex = kNotifNavIndex),
+              onPressed: () => setState(() {
+                _selectedIndex = kNotifNavIndex;
+                _detailProject = null;
+              }),
             ),
             if (notifCount > 0)
               Positioned(
@@ -165,7 +188,10 @@ class _AppShellState extends State<_AppShell> {
         child: SidebarContent(
           selectedIndex: _selectedIndex,
           onSelect: (i) {
-            setState(() => _selectedIndex = i);
+            setState(() {
+              _selectedIndex = i;
+              _detailProject = null;
+            });
             Navigator.of(context).pop();
           },
           notifCount: notifCount,
@@ -173,7 +199,7 @@ class _AppShellState extends State<_AppShell> {
           onLogout: _logout,
         ),
       ),
-      body: _buildPage(_selectedIndex),
+      body: mainContent,
     );
   }
 }

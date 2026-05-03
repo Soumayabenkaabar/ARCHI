@@ -165,7 +165,8 @@ class _DocUI {
 class ProjetDetailScreen extends StatefulWidget {
   final Project project;
   final int projectIndex;
-  const ProjetDetailScreen({super.key, required this.project, required this.projectIndex});
+  final VoidCallback? onBack;
+  const ProjetDetailScreen({super.key, required this.project, required this.projectIndex, this.onBack});
   @override State<ProjetDetailScreen> createState() => _ProjetDetailScreenState();
 }
 
@@ -508,7 +509,13 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
                 padding: EdgeInsets.fromLTRB(pad, isMobile ? 12 : 16, pad, 0),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   GestureDetector(
-                    onTap: () => Navigator.of(context).pop(),
+                    onTap: () {
+                      if (widget.onBack != null) {
+                        widget.onBack!();
+                      } else {
+                        Navigator.of(context).pop();
+                      }
+                    },
                     child: const Row(mainAxisSize: MainAxisSize.min, children: [
                       Icon(Icons.arrow_back_ios_rounded, size: 13, color: kTextSub),
                       SizedBox(width: 4),
@@ -590,7 +597,7 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
       ),
     );
 
-    if (isMobile) return content;
+    if (isMobile || widget.onBack != null) return content;
 
     return Scaffold(
       backgroundColor: kBg,

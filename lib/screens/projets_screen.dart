@@ -13,7 +13,8 @@ import '../widgets/project_full_card.dart';
 import '../widgets/map_location_picker.dart';
 
 class ProjetsScreen extends StatefulWidget {
-  const ProjetsScreen({super.key});
+  final Function(Project)? onViewProject;
+  const ProjetsScreen({super.key, this.onViewProject});
 
   @override
   State<ProjetsScreen> createState() => _ProjetsScreenState();
@@ -191,15 +192,21 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
                   children: items.map((p) => Padding(
                     padding: const EdgeInsets.only(bottom: 14),
                     child: GestureDetector(
-                      onTap: () => Navigator.push(context, MaterialPageRoute(
-                        builder: (_) => ProjetDetailScreen(project: p, projectIndex: 0),
-                      )),
+                      onTap: () {
+                        if (widget.onViewProject != null) {
+                          widget.onViewProject!(p);
+                        } else {
+                          Navigator.push(context, MaterialPageRoute(
+                            builder: (_) => ProjetDetailScreen(project: p, projectIndex: 0),
+                          ));
+                        }
+                      },
                       child: ProjectFullCard(project: p),
                     ),
                   )).toList(),
                 );
               }
-              return _ProjetGrid(projects: items, columns: cols, onRefresh: loadProjets);
+              return _ProjetGrid(projects: items, columns: cols, onRefresh: loadProjets, onViewProject: widget.onViewProject);
             }),
             const SizedBox(height: 24),
           ],
@@ -239,6 +246,7 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
     LatLng? selectedPosition;
     DateTime? pickedDebut;
     DateTime? pickedFin;
+    String? dateError;
 
     if (!mounted) return;
 
@@ -420,7 +428,18 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
                                   icon: LucideIcons.calendarDays,
                                   label: 'DATE DÉBUT',
                                   value: pickedDebut,
-                                  onPicked: (d) => sd(() => pickedDebut = d),
+                                  hasError: dateError != null,
+                                  onPicked: (d) => sd(() {
+                                    pickedDebut = d;
+                                    if (pickedFin != null &&
+                                        !pickedFin!.isAfter(d)) {
+                                      pickedFin = null;
+                                      dateError =
+                                          'La date de fin doit être postérieure à la date de début';
+                                    } else {
+                                      dateError = null;
+                                    }
+                                  }),
                                 ),
                               ),
                               const SizedBox(width: 12),
@@ -429,11 +448,39 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
                                   icon: LucideIcons.calendarCheck,
                                   label: 'DATE FIN',
                                   value: pickedFin,
-                                  onPicked: (d) => sd(() => pickedFin = d),
+                                  firstDate: pickedDebut != null
+                                      ? pickedDebut!
+                                          .add(const Duration(days: 1))
+                                      : null,
+                                  hasError: dateError != null,
+                                  onPicked: (d) => sd(() {
+                                    pickedFin = d;
+                                    dateError = (pickedDebut != null &&
+                                            !d.isAfter(pickedDebut!))
+                                        ? 'La date de fin doit être postérieure à la date de début'
+                                        : null;
+                                  }),
                                 ),
                               ),
                             ],
                           ),
+                          if (dateError != null) ...[
+                            const SizedBox(height: 6),
+                            Row(
+                              children: [
+                                const Icon(Icons.error_outline,
+                                    size: 13, color: kRed),
+                                const SizedBox(width: 4),
+                                Flexible(
+                                  child: Text(
+                                    dateError!,
+                                    style: const TextStyle(
+                                        fontSize: 11, color: kRed),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                           const SizedBox(height: 14),
 
                           // Statut selector
@@ -610,6 +657,18 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
                                         _showSnack(
                                           ctx,
                                           'Le budget ne peut pas être négatif',
+                                          kRed,
+                                        );
+                                        return;
+                                      }
+                                      if (pickedDebut != null &&
+                                          pickedFin != null &&
+                                          !pickedFin!.isAfter(pickedDebut!)) {
+                                        sd(() => dateError =
+                                            'La date de fin doit être postérieure à la date de début');
+                                        _showSnack(
+                                          ctx,
+                                          'La date de fin doit être postérieure à la date de début',
                                           kRed,
                                         );
                                         return;
@@ -909,18 +968,24 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
               LayoutBuilder(
                 builder: (context, constraints) {
                   if (constraints.maxWidth > 900) {
-                    return _ProjetGrid(projects: filtered, columns: 3, onRefresh: loadProjets);
+                    return _ProjetGrid(projects: filtered, columns: 3, onRefresh: loadProjets, onViewProject: widget.onViewProject);
                   }
                   if (constraints.maxWidth > 580) {
-                    return _ProjetGrid(projects: filtered, columns: 2, onRefresh: loadProjets);
+                    return _ProjetGrid(projects: filtered, columns: 2, onRefresh: loadProjets, onViewProject: widget.onViewProject);
                   }
                   return Column(
                     children: filtered.map((p) => Padding(
                       padding: const EdgeInsets.only(bottom: 16),
                       child: GestureDetector(
-                        onTap: () => Navigator.push(context, MaterialPageRoute(
-                          builder: (_) => ProjetDetailScreen(project: p, projectIndex: 0),
-                        )),
+                        onTap: () {
+                          if (widget.onViewProject != null) {
+                            widget.onViewProject!(p);
+                          } else {
+                            Navigator.push(context, MaterialPageRoute(
+                              builder: (_) => ProjetDetailScreen(project: p, projectIndex: 0),
+                            ));
+                          }
+                        },
                         child: ProjectFullCard(project: p),
                       ),
                     )).toList(),
@@ -972,10 +1037,12 @@ class _ProjetGrid extends StatelessWidget {
   final List<Project> projects;
   final int columns;
   final VoidCallback onRefresh;
+  final Function(Project)? onViewProject;
   const _ProjetGrid({
     required this.projects,
     required this.columns,
     required this.onRefresh,
+    this.onViewProject,
   });
 
   @override
@@ -992,15 +1059,21 @@ class _ProjetGrid extends StatelessWidget {
                 if (j > 0) const SizedBox(width: 20),
                 Expanded(
                   child: GestureDetector(
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => ProjetDetailScreen(
-                          project: rowItems[j],
-                          projectIndex: 0,
-                        ),
-                      ),
-                    ),
+                    onTap: () {
+                      if (onViewProject != null) {
+                        onViewProject!(rowItems[j]);
+                      } else {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => ProjetDetailScreen(
+                              project: rowItems[j],
+                              projectIndex: 0,
+                            ),
+                          ),
+                        );
+                      }
+                    },
                     child: ProjectFullCard(project: rowItems[j]),
                   ),
                 ),
@@ -1232,13 +1305,17 @@ class _DatePickerField extends StatelessWidget {
   final IconData icon;
   final String label;
   final DateTime? value;
-  final ValueChanged<DateTime?> onPicked;
+  final ValueChanged<DateTime> onPicked;
+  final DateTime? firstDate;
+  final bool hasError;
 
   const _DatePickerField({
     required this.icon,
     required this.label,
     required this.value,
     required this.onPicked,
+    this.firstDate,
+    this.hasError = false,
   });
 
   String _display() {
@@ -1252,15 +1329,24 @@ class _DatePickerField extends StatelessWidget {
     children: [
       Text(
         label,
-        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5),
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: hasError ? kRed : kTextSub,
+          letterSpacing: 0.5,
+        ),
       ),
       const SizedBox(height: 6),
       GestureDetector(
         onTap: () async {
+          final minDate = firstDate ?? DateTime(2000);
+          final initDate = (value != null && !value!.isBefore(minDate))
+              ? value!
+              : minDate;
           final picked = await showDatePicker(
             context: context,
-            initialDate: value ?? DateTime.now(),
-            firstDate: DateTime(2000),
+            initialDate: initDate,
+            firstDate: minDate,
             lastDate: DateTime(2100),
           );
           if (picked != null) onPicked(picked);
@@ -1268,12 +1354,15 @@ class _DatePickerField extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: hasError ? kRed.withOpacity(0.04) : Colors.white,
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: const Color(0xFFE5E7EB)),
+            border: Border.all(
+              color: hasError ? kRed : const Color(0xFFE5E7EB),
+              width: hasError ? 1.5 : 1,
+            ),
           ),
           child: Row(children: [
-            Icon(icon, size: 14, color: kTextSub),
+            Icon(icon, size: 14, color: hasError ? kRed : kTextSub),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
