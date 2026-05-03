@@ -60,18 +60,30 @@ String _fmtNum(double v) {
   return '${buf.toString().split('').reversed.join()} DT';
 }
 void _snack(BuildContext ctx, String msg, Color color) {
-  ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-    content: Row(children: [
-      const Icon(Icons.info_outline_rounded, color: Colors.white, size: 15),
-      const SizedBox(width: 8),
-      Flexible(child: Text(msg, style: const TextStyle(fontWeight: FontWeight.w500))),
-    ]),
-    backgroundColor: color,
-    behavior: SnackBarBehavior.floating,
-    margin: const EdgeInsets.all(12),
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-    duration: const Duration(seconds: 2),
-  ));
+  showDialog(
+    context: ctx,
+    builder: (dctx) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      content: Row(children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(color: color.withOpacity(0.12), shape: BoxShape.circle),
+          child: Icon(
+            color == kRed ? Icons.error_outline_rounded : Icons.check_circle_outline_rounded,
+            color: color, size: 24,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Flexible(child: Text(msg, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14))),
+      ]),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dctx),
+          child: Text('OK', style: TextStyle(color: color, fontWeight: FontWeight.w600)),
+        ),
+      ],
+    ),
+  );
 }
 
 // ── Documents : phases & helpers ──────────────────────────────────────────────
@@ -1375,9 +1387,9 @@ class _TachesTabState extends State<_TachesTab> {
         ],
         _DField(icon: LucideIcons.checkSquare, label: 'TITRE *', hint: 'Ex: Fondations', controller: titreCtrl),
         const SizedBox(height: 12),
-        _DField(icon: LucideIcons.fileText, label: 'DESCRIPTION', hint: 'Détails de la tâche...', controller: descCtrl, maxLines: 2),
+        _DField(icon: LucideIcons.fileText, label: 'DESCRIPTION *', hint: 'Détails de la tâche...', controller: descCtrl, maxLines: 2),
         const SizedBox(height: 12),
-        const Align(alignment: Alignment.centerLeft, child: Text('DATES', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5))),
+        const Align(alignment: Alignment.centerLeft, child: Text('DATES *', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5))),
         const SizedBox(height: 7),
         Row(children: [
           Expanded(child: GestureDetector(
@@ -1387,7 +1399,7 @@ class _TachesTabState extends State<_TachesTab> {
               decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE5E7EB))),
               child: Row(children: [
                 const Icon(LucideIcons.calendarDays, size: 14, color: kTextSub), const SizedBox(width: 8),
-                Expanded(child: Text(debutCtrl.text.isEmpty ? 'Date début' : debutCtrl.text, style: TextStyle(fontSize: 13, color: debutCtrl.text.isEmpty ? kTextSub : kTextMain))),
+                Expanded(child: Text(debutCtrl.text.isEmpty ? 'Date début *' : debutCtrl.text, style: TextStyle(fontSize: 13, color: debutCtrl.text.isEmpty ? kTextSub : kTextMain))),
                 if (debutCtrl.text.isNotEmpty) GestureDetector(onTap: () { debutCtrl.clear(); sd(() {}); }, child: const Icon(LucideIcons.x, size: 13, color: kTextSub)),
               ]),
             ),
@@ -1400,7 +1412,7 @@ class _TachesTabState extends State<_TachesTab> {
               decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE5E7EB))),
               child: Row(children: [
                 const Icon(LucideIcons.calendarCheck, size: 14, color: kTextSub), const SizedBox(width: 8),
-                Expanded(child: Text(finCtrl.text.isEmpty ? 'Date fin' : finCtrl.text, style: TextStyle(fontSize: 13, color: finCtrl.text.isEmpty ? kTextSub : kTextMain))),
+                Expanded(child: Text(finCtrl.text.isEmpty ? 'Date fin *' : finCtrl.text, style: TextStyle(fontSize: 13, color: finCtrl.text.isEmpty ? kTextSub : kTextMain))),
                 if (finCtrl.text.isNotEmpty) GestureDetector(onTap: () { finCtrl.clear(); sd(() {}); }, child: const Icon(LucideIcons.x, size: 13, color: kTextSub)),
               ]),
             ),
@@ -1413,7 +1425,7 @@ class _TachesTabState extends State<_TachesTab> {
             return const SizedBox.shrink();
           }),
         const SizedBox(height: 12),
-        _DField(icon: LucideIcons.banknote, label: 'BUDGET PRÉVU (DT)', hint: '50 000', controller: budgetCtrl, keyboardType: TextInputType.number),
+        _DField(icon: LucideIcons.banknote, label: 'BUDGET PRÉVU (DT) *', hint: '50 000', controller: budgetCtrl, keyboardType: TextInputType.number),
         const SizedBox(height: 12),
         _DField(icon: LucideIcons.messageSquare, label: 'REMARQUES', hint: 'Notes, observations...', controller: remarquesCtrl, maxLines: 3),
         const SizedBox(height: 14),
@@ -1593,17 +1605,17 @@ class _TachesTabState extends State<_TachesTab> {
                 if (titre.isEmpty)     { _snack(ctx, 'Titre de la tâche obligatoire', kRed); return; }
                 if (titre.length < 2)  { _snack(ctx, 'Le titre doit contenir au moins 2 caractères', kRed); return; }
                 if (titre.length > 150){ _snack(ctx, 'Le titre ne peut pas dépasser 150 caractères', kRed); return; }
+                if (descCtrl.text.trim().isEmpty) { _snack(ctx, 'Description obligatoire', kRed); return; }
+                if (debutCtrl.text.isEmpty) { _snack(ctx, 'Date de début obligatoire', kRed); return; }
+                if (finCtrl.text.isEmpty)   { _snack(ctx, 'Date de fin obligatoire', kRed); return; }
+                final d = DateTime.tryParse(debutCtrl.text); final f = DateTime.tryParse(finCtrl.text);
+                if (d != null && f != null && !f.isAfter(d)) { _snack(ctx, 'La date de fin doit être après la date de début', kRed); return; }
                 final budgetVal = budgetCtrl.text.trim();
-                if (budgetVal.isNotEmpty) {
-                  final b = double.tryParse(budgetVal.replaceAll(' ', ''));
-                  if (b == null) { _snack(ctx, 'Budget invalide', kRed); return; }
-                  if (b < 0)    { _snack(ctx, 'Le budget ne peut pas être négatif', kRed); return; }
-                  if (b > 999999999) { _snack(ctx, 'Budget trop élevé', kRed); return; }
-                }
-                if (debutCtrl.text.isNotEmpty && finCtrl.text.isNotEmpty) {
-                  final d = DateTime.tryParse(debutCtrl.text); final f = DateTime.tryParse(finCtrl.text);
-                  if (d != null && f != null && !f.isAfter(d)) { _snack(ctx, 'La date de fin doit être après la date de début', kRed); return; }
-                }
+                if (budgetVal.isEmpty) { _snack(ctx, 'Budget prévu obligatoire', kRed); return; }
+                final b = double.tryParse(budgetVal.replaceAll(' ', ''));
+                if (b == null) { _snack(ctx, 'Budget invalide', kRed); return; }
+                if (b < 0)    { _snack(ctx, 'Le budget ne peut pas être négatif', kRed); return; }
+                if (b > 999999999) { _snack(ctx, 'Budget trop élevé', kRed); return; }
                 final t = Tache(
                   id: isEdit ? existing!.id : '',
                   projetId: widget.project.id,
@@ -2906,6 +2918,8 @@ class _FactureDialogState extends State<_FactureDialog> {
     if (_montantCtrl.text.trim().isEmpty) { _snack(context, 'Montant obligatoire', kRed); return; }
     final m = double.tryParse(_montantCtrl.text.replaceAll(' ', '').replaceAll(',', '.'));
     if (m == null || m <= 0) { _snack(context, 'Montant invalide', kRed); return; }
+    if (_fournCtrl.text.trim().isEmpty) { _snack(context, widget.isInitiale ? 'Établi par obligatoire' : 'Fournisseur obligatoire', kRed); return; }
+    if (_echeanceCtrl.text.trim().isEmpty) { _snack(context, "Date d'échéance obligatoire", kRed); return; }
 
     // Récupérer le titre de la tâche sélectionnée
     final tache = _selectedTacheId != null
@@ -3053,7 +3067,7 @@ class _FactureDialogState extends State<_FactureDialog> {
             Row(children: [
               Expanded(child: _DField(
                 icon: LucideIcons.building2,
-                label: widget.isInitiale ? 'ÉTABLI PAR' : 'FOURNISSEUR',
+                label: widget.isInitiale ? 'ÉTABLI PAR *' : 'FOURNISSEUR *',
                 hint: 'Cabinet / Entreprise',
                 controller: _fournCtrl,
               )),
@@ -3061,7 +3075,7 @@ class _FactureDialogState extends State<_FactureDialog> {
               Expanded(child: GestureDetector(
                 onTap: _pickDate,
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  const Text("DATE D'ÉCHÉANCE", style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5)),
+                  const Text("DATE D'ÉCHÉANCE *", style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5)),
                   const SizedBox(height: 6),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -3070,7 +3084,7 @@ class _FactureDialogState extends State<_FactureDialog> {
                       const Icon(LucideIcons.calendar, size: 14, color: kTextSub),
                       const SizedBox(width: 8),
                       Expanded(child: Text(
-                        _echeanceCtrl.text.isEmpty ? 'Sélectionner' : _echeanceCtrl.text,
+                        _echeanceCtrl.text.isEmpty ? 'Sélectionner *' : _echeanceCtrl.text,
                         style: TextStyle(fontSize: 13, color: _echeanceCtrl.text.isEmpty ? kTextSub : kTextMain),
                       )),
                     ]),

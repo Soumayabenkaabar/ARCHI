@@ -94,13 +94,27 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   void _snack(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg),
-      backgroundColor: kRed,
-      behavior: SnackBarBehavior.floating,
-      margin: const EdgeInsets.all(12),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-    ));
+    showDialog(
+      context: context,
+      builder: (dctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        content: Row(children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(color: kRed.withOpacity(0.12), shape: BoxShape.circle),
+            child: const Icon(Icons.error_outline_rounded, color: kRed, size: 24),
+          ),
+          const SizedBox(width: 12),
+          Flexible(child: Text(msg, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14))),
+        ]),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dctx),
+            child: const Text('OK', style: TextStyle(color: kRed, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
   }
 
 

@@ -45,6 +45,33 @@ class _ClientsScreenState extends State<ClientsScreen> {
     }
   }
 
+  void _snack(BuildContext ctx, String msg, Color color) {
+    showDialog(
+      context: ctx,
+      builder: (dctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        content: Row(children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(color: color.withOpacity(0.12), shape: BoxShape.circle),
+            child: Icon(
+              color == kRed ? Icons.error_outline_rounded : Icons.check_circle_outline_rounded,
+              color: color, size: 24,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Flexible(child: Text(msg, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14))),
+        ]),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dctx),
+            child: Text('OK', style: TextStyle(color: color, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ── Popup Ajouter / Modifier un client ──────────────────────────────────────
   void showAddClientDialog({Client? clientToEdit}) {
     final nomController = TextEditingController(text: clientToEdit?.nom ?? '');
@@ -286,15 +313,7 @@ class _ClientsScreenState extends State<ClientsScreen> {
                                             if (dialogContext.mounted) Navigator.pop(dialogContext);
                                             await loadClients();
                                             if (!mounted) return;
-                                            ScaffoldMessenger.of(screenContext).showSnackBar(
-                                              SnackBar(
-                                                content: const Text('Client modifié avec succès'),
-                                                backgroundColor: kAccent,
-                                                behavior: SnackBarBehavior.floating,
-                                                shape: RoundedRectangleBorder(
-                                                    borderRadius: BorderRadius.circular(8)),
-                                              ),
-                                            );
+                                            _snack(screenContext, 'Client modifié avec succès', kAccent);
                                           } else {
                                             // ── AJOUTER ───────────────────────────
                                             await ClientService.addClient(client);
@@ -380,15 +399,7 @@ class _ClientsScreenState extends State<ClientsScreen> {
                                                 ),
                                               );
                                             } else {
-                                              ScaffoldMessenger.of(screenContext).showSnackBar(
-                                                SnackBar(
-                                                  content: const Text('Client ajouté avec succès'),
-                                                  backgroundColor: kAccent,
-                                                  behavior: SnackBarBehavior.floating,
-                                                  shape: RoundedRectangleBorder(
-                                                      borderRadius: BorderRadius.circular(8)),
-                                                ),
-                                              );
+                                              _snack(screenContext, 'Client ajouté avec succès', kAccent);
                                             }
                                           }
                                         } catch (e) {
@@ -396,9 +407,7 @@ class _ClientsScreenState extends State<ClientsScreen> {
                                             setStateDialog(() => dialogLoading = false);
                                           }
                                           if (!mounted) return;
-                                          ScaffoldMessenger.of(screenContext).showSnackBar(
-                                            SnackBar(content: Text('Erreur: $e')),
-                                          );
+                                          _snack(screenContext, 'Erreur: $e', kRed);
                                         }
                                       },
                                 icon: dialogLoading
@@ -667,20 +676,10 @@ class _ClientsScreenState extends State<ClientsScreen> {
                       }
                       await loadClients();
                       if (!mounted) return;
-                      ScaffoldMessenger.of(screenContext).showSnackBar(
-                        SnackBar(
-                          content: const Text('Client supprimé'),
-                          backgroundColor: kRed,
-                          behavior: SnackBarBehavior.floating,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8)),
-                        ),
-                      );
+                      _snack(screenContext, 'Client supprimé', kRed);
                     } catch (e) {
                       if (!mounted) return;
-                      ScaffoldMessenger.of(screenContext).showSnackBar(
-                        SnackBar(content: Text('Erreur: $e')),
-                      );
+                      _snack(screenContext, 'Erreur: $e', kRed);
                     }
                   },
                   icon: const Icon(LucideIcons.trash2, size: 14, color: Colors.white),

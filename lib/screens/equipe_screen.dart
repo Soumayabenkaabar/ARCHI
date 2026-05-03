@@ -920,11 +920,30 @@ class _DropdownField extends StatelessWidget {
 }
 
 void _showSnack(BuildContext context, String msg, Color color) {
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-    content: Text(msg), backgroundColor: color,
-    behavior: SnackBarBehavior.floating,
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-  ));
+  showDialog(
+    context: context,
+    builder: (dctx) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      content: Row(children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(color: color.withOpacity(0.12), shape: BoxShape.circle),
+          child: Icon(
+            color == kRed ? Icons.error_outline_rounded : Icons.check_circle_outline_rounded,
+            color: color, size: 24,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Flexible(child: Text(msg, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14))),
+      ]),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dctx),
+          child: Text('OK', style: TextStyle(color: color, fontWeight: FontWeight.w600)),
+        ),
+      ],
+    ),
+  );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1006,12 +1025,30 @@ class _CongeDialogState extends State<_CongeDialog> {
   }
 
   void _snack(String msg, Color color) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg, style: const TextStyle(fontWeight: FontWeight.w500)),
-      backgroundColor: color, behavior: SnackBarBehavior.floating,
-      margin: const EdgeInsets.all(12),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-    ));
+    showDialog(
+      context: context,
+      builder: (dctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        content: Row(children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(color: color.withOpacity(0.12), shape: BoxShape.circle),
+            child: Icon(
+              color == kRed ? Icons.error_outline_rounded : Icons.check_circle_outline_rounded,
+              color: color, size: 24,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Flexible(child: Text(msg, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14))),
+        ]),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dctx),
+            child: Text('OK', style: TextStyle(color: color, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
   }
 
   @override

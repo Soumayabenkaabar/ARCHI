@@ -172,21 +172,30 @@ class _ParametresScreenState extends State<ParametresScreen> {
   }
 
   void _snack(String msg, Color color) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Row(children: [
-        Icon(
-          msg.startsWith('✓') ? LucideIcons.checkCircle : LucideIcons.alertCircle,
-          color: Colors.white, size: 15,
-        ),
-        const SizedBox(width: 8),
-        Flexible(child: Text(msg, style: const TextStyle(fontWeight: FontWeight.w500))),
-      ]),
-      backgroundColor: color,
-      behavior: SnackBarBehavior.floating,
-      margin: const EdgeInsets.all(12),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      duration: const Duration(seconds: 3),
-    ));
+    showDialog(
+      context: context,
+      builder: (dctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        content: Row(children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(color: color.withOpacity(0.12), shape: BoxShape.circle),
+            child: Icon(
+              color == kRed ? Icons.error_outline_rounded : Icons.check_circle_outline_rounded,
+              color: color, size: 24,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Flexible(child: Text(msg, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14))),
+        ]),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dctx),
+            child: Text('OK', style: TextStyle(color: color, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
   }
 
   @override

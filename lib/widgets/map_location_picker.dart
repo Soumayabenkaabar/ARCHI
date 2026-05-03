@@ -82,13 +82,27 @@ class _MapLocationPickerDialogState extends State<_MapLocationPickerDialog>
       setState(() { _selected = ll; _zoom = 16.0; });
       _mapCtrl.move(ll, 16.0);
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('$e'),
-        backgroundColor: kRed,
-        behavior: SnackBarBehavior.floating,
-        margin: const EdgeInsets.all(12),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ));
+      if (mounted) showDialog(
+        context: context,
+        builder: (dctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          content: Row(children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(color: kRed.withOpacity(0.12), shape: BoxShape.circle),
+              child: const Icon(Icons.error_outline_rounded, color: kRed, size: 24),
+            ),
+            const SizedBox(width: 12),
+            Flexible(child: Text('$e', style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14))),
+          ]),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dctx),
+              child: const Text('OK', style: TextStyle(color: kRed, fontWeight: FontWeight.w600)),
+            ),
+          ],
+        ),
+      );
     } finally {
       if (mounted) setState(() => _loadingGps = false);
     }
