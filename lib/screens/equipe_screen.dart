@@ -122,6 +122,33 @@ class _EquipeScreenState extends State<EquipeScreen> {
     );
   }
 
+  Future<void> _confirmDelete(BuildContext ctx, Membre m) async {
+    final confirmed = await showDialog<bool>(
+      context: ctx,
+      builder: (dctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: const Text('Supprimer le membre ?', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+        content: Text(
+          'Es-tu sûr de vouloir supprimer ${m.nom} et toutes ses tâches assignées ?',
+          style: const TextStyle(color: kTextSub, fontSize: 13),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dctx, false), child: const Text('Annuler')),
+          TextButton(
+            onPressed: () => Navigator.pop(dctx, true),
+            child: const Text('Supprimer', style: TextStyle(color: kRed, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !ctx.mounted) return;
+    await MembreService.deleteMembreWithTaches(m.id);
+    if (ctx.mounted) {
+      _showSnack(ctx, 'Membre et ses tâches supprimés', kRed);
+      loadMembres();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.of(context).size.width < 800;
@@ -129,21 +156,7 @@ class _EquipeScreenState extends State<EquipeScreen> {
     if (isLoading)
       return const Center(child: CircularProgressIndicator(color: kAccent));
 
-    final filtered    = membres.where((m) => m.nom.toLowerCase().contains(searchQuery.toLowerCase())).toList();
-    final nbActifs    = filtered.where((m) => !m.disponible).length;
-    final nbDispos    = filtered.where((m) =>  m.disponible).length;
-    final nbConges    = _membresEnConge.length;
-
-    // ── KPI cards helper ──────────────────────────────────────────────────
-    Widget kpiRow(List<Widget> cards) => IntrinsicHeight(
-      child: Row(crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: cards.expand((c) => [c, const SizedBox(width: 10)]).toList()
-            ..removeLast()),
-    );
-    final kpi1 = _StatCard(title: 'Total',       value: '${filtered.length}', icon: LucideIcons.users,       color: kAccent);
-    final kpi2 = _StatCard(title: 'En activité', value: '$nbActifs',           icon: LucideIcons.activity,    color: const Color(0xFFD97706));
-    final kpi3 = _StatCard(title: 'Disponibles', value: '$nbDispos',           icon: LucideIcons.checkCircle, color: const Color(0xFF10B981));
-    final kpi4 = _StatCard(title: 'En congé',    value: '$nbConges',           icon: LucideIcons.umbrella,    color: const Color(0xFFF97316));
+    final filtered = membres.where((m) => m.nom.toLowerCase().contains(searchQuery.toLowerCase())).toList();
 
     return Container(
       color: kBg,
@@ -200,16 +213,6 @@ class _EquipeScreenState extends State<EquipeScreen> {
                 ),
               ),
             ),
-
-            const SizedBox(height: 16),
-
-            // ── KPI cards (1×4 desktop / 2×2 mobile) ──────────────────────
-            if (isMobile) ...[
-              kpiRow([Expanded(child: kpi1), Expanded(child: kpi2)]),
-              const SizedBox(height: 10),
-              kpiRow([Expanded(child: kpi3), Expanded(child: kpi4)]),
-            ] else
-              kpiRow([Expanded(child: kpi1), Expanded(child: kpi2), Expanded(child: kpi3), Expanded(child: kpi4)]),
 
             const SizedBox(height: 24),
 
@@ -270,11 +273,7 @@ class _EquipeScreenState extends State<EquipeScreen> {
                     onView:   () => showViewDialog(context, m),
                     onEdit:   () => showEditDialog(context, m, loadMembres),
                     onConge:  () => showCongeDialog(context, m, loadMembres),
-                    onDelete: () async {
-                      await MembreService.deleteMembre(m.id);
-                      if (context.mounted) _showSnack(context, 'Membre supprimé', kRed);
-                      loadMembres();
-                    },
+                    onDelete: () => _confirmDelete(context, m),
                   ),
                 )),
               ],

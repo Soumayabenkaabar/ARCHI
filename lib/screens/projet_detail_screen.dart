@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:archi_manager/models/notification.dart';
 import '../service/notification_service.dart';
 import 'package:file_picker/file_picker.dart';
@@ -99,6 +100,85 @@ Color _phaseColor(String phase) {
     case 'EXE/DET': return const Color(0xFF10B981);
     default:        return kAccent;
   }
+}
+
+void _openAttachmentPopup(BuildContext context, String name, String url) {
+  final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
+  final isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp'].contains(ext);
+
+  showDialog(
+    context: context,
+    builder: (dctx) => Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.all(16),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          color: Colors.white,
+          constraints: const BoxConstraints(maxWidth: 700, maxHeight: 600),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            // Header
+            Container(
+              padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
+              decoration: const BoxDecoration(color: kAccent, borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+              child: Row(children: [
+                Icon(_iconForFileName(name), size: 16, color: Colors.white),
+                const SizedBox(width: 10),
+                Expanded(child: Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13), overflow: TextOverflow.ellipsis)),
+                IconButton(
+                  onPressed: () => Navigator.pop(dctx),
+                  icon: const Icon(LucideIcons.x, size: 18, color: Colors.white),
+                  padding: EdgeInsets.zero, constraints: const BoxConstraints(),
+                ),
+              ]),
+            ),
+            // Content
+            if (isImage)
+              Flexible(
+                child: InteractiveViewer(
+                  minScale: 0.5, maxScale: 5,
+                  child: Image.network(url, fit: BoxFit.contain,
+                    loadingBuilder: (_, child, progress) => progress == null
+                        ? child
+                        : const Center(child: CircularProgressIndicator(color: kAccent)),
+                    errorBuilder: (_, __, ___) => const Padding(
+                      padding: EdgeInsets.all(32),
+                      child: Icon(LucideIcons.imageOff, size: 40, color: kTextSub),
+                    ),
+                  ),
+                ),
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.all(32),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(_iconForFileName(name), size: 48, color: kAccent),
+                  const SizedBox(height: 16),
+                  Text(name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: kTextMain), textAlign: TextAlign.center),
+                  const SizedBox(height: 24),
+                  ElevatedButton.icon(
+                    onPressed: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+                    icon: const Icon(LucideIcons.download, size: 15, color: Colors.white),
+                    label: const Text('Ouvrir / Télécharger', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                    style: ElevatedButton.styleFrom(backgroundColor: kAccent, elevation: 0, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                  ),
+                ]),
+              ),
+          ]),
+        ),
+      ),
+    ),
+  );
+}
+
+IconData _iconForFileName(String name) {
+  final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
+  if (ext == 'pdf')  return LucideIcons.fileText;
+  if (ext == 'png' || ext == 'jpg' || ext == 'jpeg') return LucideIcons.image;
+  if (ext == 'xlsx' || ext == 'xls') return LucideIcons.fileSpreadsheet;
+  if (ext == 'doc' || ext == 'docx') return LucideIcons.fileText;
+  if (ext == 'dwg')  return LucideIcons.penTool;
+  return LucideIcons.file;
 }
 
 IconData _docIconFromLabel(String typeLabel) {
@@ -582,8 +662,21 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
 
   Future<void> _loadCommentCount() async {
     try {
+      final prefs   = await SharedPreferences.getInstance();
+      final lastSeen = prefs.getString('comments_last_seen_${widget.project.id}');
       final comments = await CommentaireService.getCommentaires(widget.project.id);
-      if (mounted) setState(() => _commentCount = comments.length);
+      final clientMsgs = comments.where((c) => c.role == 'client').toList();
+      int count;
+      if (lastSeen == null) {
+        count = clientMsgs.length;
+      } else {
+        final lastSeenDt = DateTime.tryParse(lastSeen);
+        count = lastSeenDt == null ? 0 : clientMsgs.where((c) {
+          final t = DateTime.tryParse(c.createdAt);
+          return t != null && t.isAfter(lastSeenDt);
+        }).length;
+      }
+      if (mounted) setState(() => _commentCount = count);
     } catch (_) {}
   }
 
@@ -953,19 +1046,27 @@ class _TachesTabState extends State<_TachesTab> {
         filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'projet_id', value: pid),
         callback: (_) { if (mounted) _load(); },
       )
+      .onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'membre_taches',
+        filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'projet_id', value: pid),
+        callback: (_) { if (mounted) _load(); },
+      )
       .subscribe();
   }
 
   Future<void> _load() async {
     try {
       final results = await Future.wait([
-        TacheService.getTaches(widget.project.id),
-        PhaseService.getPhases(widget.project.id),
-        Model3DService.getModel(widget.project.id).catchError((_) => null),
-        MembreService.getMembresParTacheDetail(widget.project.id),
-        MembreService.getMembres(),
-        CongeService.getAllConges(),
+        TacheService.getTaches(widget.project.id).catchError((_) => taches),
+        PhaseService.getPhases(widget.project.id).catchError((_) => phases),
+        Model3DService.getModel(widget.project.id).catchError((_) => _model3D),
+        MembreService.getMembresParTacheDetail(widget.project.id).catchError((_) => _membresParTache),
+        MembreService.getMembres().catchError((_) => _tousLesMembres),
+        CongeService.getAllConges().catchError((_) => <Conge>[]),
       ]);
+      if (!mounted) return;
       setState(() {
         taches  = results[0] as List<Tache>;
         phases  = results[1] as List<Phase>;
@@ -985,7 +1086,7 @@ class _TachesTabState extends State<_TachesTab> {
         loading = false;
       });
       widget.onTasksChanged?.call();
-    } catch (_) { setState(() => loading = false); }
+    } catch (_) { if (mounted) setState(() => loading = false); }
   }
 
   int    get _total      => taches.length;
@@ -1630,17 +1731,21 @@ class _TachesTabState extends State<_TachesTab> {
                   meshNames: selectedMeshes.toList(),
                   createdAt: isEdit ? existing!.createdAt : '',
                 );
-                if (isEdit) {
-                  if (statut != existing!.statut) await TacheService.updateStatut(t.id, statut, projetId: widget.project.id, ancienStatut: existing.statut, budgetEstime: t.budgetEstime);
-                  await TacheService.updateTache(t);
-                  await MembreService.assignMembresForTache(t.id, selectedMembres.toList(), widget.project.id);
-                  _snack(context, 'Tâche modifiée', kAccent);
-                } else {
-                  final newId = await TacheService.addTache(t);
-                  await MembreService.assignMembresForTache(newId, selectedMembres.toList(), widget.project.id);
-                  _snack(context, 'Tâche ajoutée', kAccent);
+                try {
+                  if (isEdit) {
+                    if (statut != existing!.statut) await TacheService.updateStatut(t.id, statut, projetId: widget.project.id, ancienStatut: existing.statut, budgetEstime: t.budgetEstime);
+                    await TacheService.updateTache(t);
+                    await MembreService.assignMembresForTache(t.id, selectedMembres.toList(), widget.project.id);
+                  } else {
+                    final newId = await TacheService.addTache(t);
+                    await MembreService.assignMembresForTache(newId, selectedMembres.toList(), widget.project.id);
+                  }
+                } catch (e) {
+                  _snack(ctx, 'Erreur : $e', kRed);
+                  return;
+                } finally {
+                  _pollTimer?.cancel();
                 }
-                _pollTimer?.cancel();
                 Navigator.pop(ctx);
                 _load();
               },
@@ -1822,10 +1927,25 @@ class _TacheCardState extends State<_TacheCard> {
   Widget build(BuildContext context) {
     final tache = widget.tache; final color = _tacheColor(tache.statut);
     final pct = tache.statut == 'termine' ? 100 : tache.statut == 'en_cours' ? 65 : 0;
+    final noMembre = widget.assignedMembres.isEmpty;
     return Container(
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFF0F0F0)), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 6, offset: const Offset(0, 2))]),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: noMembre ? Border.all(color: kRed, width: 1.5) : Border.all(color: const Color(0xFFF0F0F0)),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 6, offset: const Offset(0, 2))],
+      ),
       child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [Expanded(child: Text(tache.titre, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: kTextMain))), const SizedBox(width: 12), Text('$pct%', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: pct == 100 ? const Color(0xFF10B981) : pct > 0 ? kAccent : const Color(0xFF9CA3AF)))]),
+        Row(children: [
+          Expanded(child: Text(tache.titre, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: kTextMain))),
+          if (noMembre) ...[
+            const SizedBox(width: 8),
+            const Icon(Icons.error_outline_rounded, size: 18, color: kRed),
+            const SizedBox(width: 8),
+          ] else
+            const SizedBox(width: 12),
+          Text('$pct%', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: pct == 100 ? const Color(0xFF10B981) : pct > 0 ? kAccent : const Color(0xFF9CA3AF))),
+        ]),
         const SizedBox(height: 6),
         ClipRRect(borderRadius: BorderRadius.circular(4), child: LinearProgressIndicator(value: pct / 100, minHeight: 4, backgroundColor: const Color(0xFFE5E7EB), valueColor: AlwaysStoppedAnimation<Color>(color))),
         const SizedBox(height: 10),
@@ -4016,6 +4136,31 @@ class _AddLivrableDialogState extends State<_AddLivrableDialog> {
   final _versionCtrl = TextEditingController(text: '1');
   final _dateCtrl    = TextEditingController();
   String _phase = 'ESQ'; String _typeLabel = 'Plan'; String? _fileName;
+  List<_DocUI> _existingDocs = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadExistingDocs();
+  }
+
+  Future<void> _loadExistingDocs() async {
+    try {
+      final docs = await DocumentService.getDocuments(widget.projectId);
+      if (!mounted) return;
+      setState(() {
+        _existingDocs = docs.map((d) => _DocUI.fromDocument(d)).toList();
+        _versionCtrl.text = _nextVersion(_typeLabel).toString();
+      });
+    } catch (_) {}
+  }
+
+  int _nextVersion(String typeLabel) {
+    final versions = _existingDocs
+        .where((d) => d.typeLabel == typeLabel)
+        .map((d) => d.version);
+    return versions.isEmpty ? 1 : versions.reduce((a, b) => a > b ? a : b) + 1;
+  }
 
   @override void dispose() { _nomCtrl.dispose(); _urlCtrl.dispose(); _versionCtrl.dispose(); _dateCtrl.dispose(); super.dispose(); }
 
@@ -4130,10 +4275,22 @@ class _AddLivrableDialogState extends State<_AddLivrableDialog> {
           Row(children: [
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Text('TYPE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5)), const SizedBox(height: 6),
-              Container(decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE5E7EB))), child: DropdownButtonHideUnderline(child: DropdownButton<String>(value: _typeLabel, isExpanded: true, padding: const EdgeInsets.symmetric(horizontal: 12), style: const TextStyle(color: kTextMain, fontSize: 13), borderRadius: BorderRadius.circular(8), items: kDocTypes.map((t) => DropdownMenuItem<String>(value: t, child: Row(children: [Icon(_docIconFromLabel(t), size: 13, color: kTextSub), const SizedBox(width: 8), Text(t)]))).toList(), onChanged: (v) => setState(() => _typeLabel = v ?? _typeLabel)))),
+              Container(decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE5E7EB))), child: DropdownButtonHideUnderline(child: DropdownButton<String>(value: _typeLabel, isExpanded: true, padding: const EdgeInsets.symmetric(horizontal: 12), style: const TextStyle(color: kTextMain, fontSize: 13), borderRadius: BorderRadius.circular(8), items: kDocTypes.map((t) => DropdownMenuItem<String>(value: t, child: Row(children: [Icon(_docIconFromLabel(t), size: 13, color: kTextSub), const SizedBox(width: 8), Text(t)]))).toList(), onChanged: (v) { if (v == null) return; setState(() { _typeLabel = v; _versionCtrl.text = _nextVersion(v).toString(); }); }))),
             ])),
             const SizedBox(width: 12),
-            Expanded(child: _DField(icon: LucideIcons.gitBranch, label: 'VERSION', hint: '1', controller: _versionCtrl, keyboardType: TextInputType.number)),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('VERSION', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5)),
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                decoration: BoxDecoration(color: kAccent.withOpacity(0.08), borderRadius: BorderRadius.circular(8), border: Border.all(color: kAccent.withOpacity(0.3))),
+                child: Row(children: [
+                  const Icon(LucideIcons.gitBranch, size: 14, color: kAccent),
+                  const SizedBox(width: 8),
+                  Text('V${_versionCtrl.text}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: kAccent)),
+                ]),
+              ),
+            ])),
           ]),
           const SizedBox(height: 12),
           const Text("DATE DU DOCUMENT", style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5)),
@@ -4187,7 +4344,6 @@ class _AddLivrableDialogState extends State<_AddLivrableDialog> {
               ]),
             ),
           ),
-          if (_fileName == null) ...[const SizedBox(height: 12), _DField(icon: LucideIcons.link, label: 'OU URL DU FICHIER', hint: 'https://...', controller: _urlCtrl)],
         ])),
         Container(padding: const EdgeInsets.fromLTRB(20, 12, 20, 20), decoration: const BoxDecoration(border: Border(top: BorderSide(color: Color(0xFFE5E7EB)))), child: Row(children: [Expanded(child: OutlinedButton(onPressed: () => Navigator.pop(context), style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 13), side: const BorderSide(color: Color(0xFFD1D5DB)), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))), child: const Text('Annuler', style: TextStyle(color: kTextSub, fontWeight: FontWeight.w600)))), const SizedBox(width: 10), Expanded(child: ElevatedButton(onPressed: _uploading ? null : _submit, style: ElevatedButton.styleFrom(backgroundColor: kAccent, elevation: 0, padding: const EdgeInsets.symmetric(vertical: 13), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))), child: _uploading ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text('Ajouter', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700))))])),
       ]))),
@@ -4255,6 +4411,39 @@ class _EquipeTabState extends State<_EquipeTab> {
     } catch (e) { setState(() => loading = false); }
   }
 
+  Future<void> _confirmRemove(BuildContext ctx, Membre m) async {
+    final confirmed = await showDialog<bool>(
+      context: ctx,
+      builder: (dctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: const Text('Retirer le membre ?', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+        content: Text(
+          'Es-tu sûr de vouloir retirer ${m.nom} de ce projet ?',
+          style: const TextStyle(color: kTextSub, fontSize: 13),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dctx, false), child: const Text('Annuler')),
+          TextButton(
+            onPressed: () => Navigator.pop(dctx, true),
+            child: const Text('Retirer', style: TextStyle(color: kRed, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => membres.removeWhere((x) => x.id == m.id));
+    try {
+      await ProjectMemberService.removeMembre(widget.project.id, m.id);
+      await Supabase.instance.client
+          .from('membre_taches')
+          .delete()
+          .eq('membre_id', m.id)
+          .eq('projet_id', widget.project.id);
+    } catch (_) {
+      if (mounted) _load();
+    }
+  }
+
   Color _avatarColor(String nom) {
     const colors = [
       Color(0xFF3B82F6), Color(0xFF8B5CF6), Color(0xFF10B981),
@@ -4311,18 +4500,6 @@ class _EquipeTabState extends State<_EquipeTab> {
         ]),
         const SizedBox(height: 20),
 
-        // ── KPIs ─────────────────────────────────────────────────────────
-        if (membres.isNotEmpty) ...[
-          IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            _EquipeKpi(icon: LucideIcons.users,       label: 'Membres',        value: '${membres.length}',                                              color: kAccent),
-            const SizedBox(width: 10),
-            _EquipeKpi(icon: LucideIcons.checkCircle, label: 'Disponibles',    value: '${membres.where((m) => m.disponible).length}',                   color: const Color(0xFF10B981)),
-            const SizedBox(width: 10),
-            _EquipeKpi(icon: LucideIcons.briefcase,   label: 'Rôles distincts',value: '${membres.map((m) => m.role).where((r) => r.isNotEmpty).toSet().length}', color: const Color(0xFF8B5CF6)),
-          ])),
-          const SizedBox(height: 20),
-        ],
-
         // ── Grille membres ───────────────────────────────────────────────
         if (membres.isEmpty)
           Container(
@@ -4352,6 +4529,7 @@ class _EquipeTabState extends State<_EquipeTab> {
                     initiales: _initiales(row[j].nom),
                     isChef: widget.project.chef.isNotEmpty &&
                         row[j].nom.toLowerCase().contains(widget.project.chef.toLowerCase()),
+                    onDelete: () => _confirmRemove(context, row[j]),
                   )),
                 ],
                 if (row.length < cols) ...[const SizedBox(width: 14), const Expanded(child: SizedBox())],
@@ -4392,7 +4570,8 @@ class _MembreCard extends StatelessWidget {
   final Color avatarColor;
   final String initiales;
   final bool isChef;
-  const _MembreCard({required this.membre, required this.avatarColor, required this.initiales, this.isChef = false});
+  final VoidCallback? onDelete;
+  const _MembreCard({required this.membre, required this.avatarColor, required this.initiales, this.isChef = false, this.onDelete});
 
   @override
   Widget build(BuildContext context) {
@@ -4446,7 +4625,7 @@ class _MembreCard extends StatelessWidget {
             const SizedBox(height: 7),
           ],
           const SizedBox(height: 4),
-          // Disponibilité + projets
+          // Disponibilité + projets + supprimer
           Row(children: [
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -4458,7 +4637,7 @@ class _MembreCard extends StatelessWidget {
               ]),
             ),
             const Spacer(),
-            if (m.projetsAssignes.isNotEmpty)
+            if (m.projetsAssignes.isNotEmpty) ...[
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(6)),
@@ -4467,6 +4646,17 @@ class _MembreCard extends StatelessWidget {
                   const SizedBox(width: 4),
                   Text('${m.projetsAssignes.length} projet${m.projetsAssignes.length > 1 ? "s" : ""}', style: const TextStyle(fontSize: 10, color: kTextSub, fontWeight: FontWeight.w600)),
                 ]),
+              ),
+              const SizedBox(width: 6),
+            ],
+            if (onDelete != null)
+              GestureDetector(
+                onTap: onDelete,
+                child: Container(
+                  padding: const EdgeInsets.all(5),
+                  decoration: BoxDecoration(color: kRed.withOpacity(0.08), borderRadius: BorderRadius.circular(6)),
+                  child: const Icon(LucideIcons.trash2, size: 13, color: kRed),
+                ),
               ),
           ]),
         ])),
@@ -4490,7 +4680,6 @@ class _SuiviPhotosTabState extends State<_SuiviPhotosTab> {
   // ── Pointage ──────────────────────────────────────────────────────────────
   List<Map<String, dynamic>> _defauts   = [];
   List<Map<String, dynamic>> _documents = []; // plans disponibles
-  Map<String, dynamic>?      _planActif;
   bool _loadingDefauts = true;
 
   // ── Galerie ───────────────────────────────────────────────────────────────
@@ -4608,34 +4797,60 @@ class _SuiviPhotosTabState extends State<_SuiviPhotosTab> {
     } catch (_) { _snack(context, 'Erreur suppression', kRed); }
   }
 
-  // ── Actions Défaut ────────────────────────────────────────────────────────
-  void _showAddDefautDialog(double rx, double ry, String docId, String docNom) {
-    final ctrl = TextEditingController();
-    showDialog(context: context, builder: (_) => Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 380), child: Column(mainAxisSize: MainAxisSize.min, children: [
-        _DialogHeader(icon: LucideIcons.mapPin, title: 'Nouveau pointage', subtitle: 'Décrivez le défaut ou la remarque'),
-        Padding(padding: const EdgeInsets.all(20), child: _DField(icon: LucideIcons.alertTriangle, label: 'DESCRIPTION *', hint: 'Ex: Fissure sur le mur nord', controller: ctrl, maxLines: 2)),
-        _DialogActions(onCancel: () => Navigator.pop(context), onConfirm: () async {
-          final t = ctrl.text.trim();
-          if (t.isEmpty) { _snack(context, 'Description obligatoire', kRed); return; }
-          try {
-            await Supabase.instance.client.from('defauts').insert({
-              'projet_id':    widget.project.id,
-              'document_id':  docId,
-              'document_nom': docNom,
-              'titre':        t,
-              'statut':       'a_faire',
-              'x':            rx,
-              'y':            ry,
-            });
-            Navigator.pop(context);
-            _snack(context, 'Pointage ajouté', kAccent);
-            await _loadDefauts();
-          } catch (_) { _snack(context, 'Erreur sauvegarde', kRed); }
-        }, label: 'Ajouter'),
-      ])),
-    ));
+  void _openPhotoPopup(BuildContext ctx, String url, String nom, String date) {
+    showDialog(
+      context: ctx,
+      barrierColor: Colors.black87,
+      builder: (dctx) => Material(
+        color: Colors.transparent,
+        child: Stack(children: [
+          Positioned.fill(child: InteractiveViewer(
+            minScale: 0.5, maxScale: 6.0,
+            child: Center(child: Image.network(url, fit: BoxFit.contain,
+              errorBuilder: (_, __, ___) => const Icon(LucideIcons.image, size: 64, color: Colors.white60))),
+          )),
+          Positioned(
+            top: MediaQuery.of(dctx).padding.top + 8, right: 8,
+            child: GestureDetector(
+              onTap: () => Navigator.pop(dctx),
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+                child: const Icon(Icons.close, color: Colors.white, size: 20),
+              ),
+            ),
+          ),
+          Positioned(
+            bottom: MediaQuery.of(dctx).padding.bottom + 16,
+            left: 16, right: 16,
+            child: Center(child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(10)),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Text(nom, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
+                    overflow: TextOverflow.ellipsis, textAlign: TextAlign.center),
+                if (date.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(_formatDate(date),
+                      style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                ],
+              ]),
+            )),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  void _openPlanDialog(Map<String, dynamic> doc) {
+    showDialog(
+      context: context,
+      builder: (_) => _PlanPointageDialog(
+        doc: doc,
+        projectId: widget.project.id,
+        onChanged: _loadDefauts,
+      ),
+    );
   }
 
   Future<void> _toggleDefautStatut(Map<String, dynamic> d) async {
@@ -4858,15 +5073,15 @@ class _SuiviPhotosTabState extends State<_SuiviPhotosTab> {
             OutlinedButton.icon(
               onPressed: _showAddActualiteDialog,
               icon: const Icon(LucideIcons.rss, size: 13, color: Color(0xFF10B981)),
-              label: const Text('Actualité', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF10B981))),
-              style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFF10B981)), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+              label: Text(isMobile ? '+' : 'Actualité', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF10B981))),
+              style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFF10B981)), padding: EdgeInsets.symmetric(horizontal: isMobile ? 8 : 12, vertical: 9), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
             ),
             const SizedBox(width: 8),
             ElevatedButton.icon(
               onPressed: _showAddCrcDialog,
               icon: const Icon(LucideIcons.clipboardList, size: 13, color: Colors.white),
-              label: const Text('Rapport CRC', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12)),
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF3B82F6), elevation: 0, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+              label: Text(isMobile ? 'CRC' : 'Rapport CRC', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12)),
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF3B82F6), elevation: 0, padding: EdgeInsets.symmetric(horizontal: isMobile ? 8 : 12, vertical: 9), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
             ),
           ],
         ]),
@@ -4881,7 +5096,7 @@ class _SuiviPhotosTabState extends State<_SuiviPhotosTab> {
               child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                 Icon([LucideIcons.mapPin, LucideIcons.image, LucideIcons.clipboardList][i], size: 13, color: _subTab == i ? kTextMain : kTextSub),
                 const SizedBox(width: 6),
-                Text(['Pointage', 'Photos', 'Rapports & Actualités'][i], style: TextStyle(fontSize: 12, fontWeight: _subTab == i ? FontWeight.w700 : FontWeight.w500, color: _subTab == i ? kTextMain : kTextSub)),
+                Text(['Pointage', 'Photos', isMobile ? 'CRC' : 'Rapports & Actualités'][i], style: TextStyle(fontSize: 12, fontWeight: _subTab == i ? FontWeight.w700 : FontWeight.w500, color: _subTab == i ? kTextMain : kTextSub)),
               ]),
             ))),
         ])),
@@ -4952,34 +5167,28 @@ class _SuiviPhotosTabState extends State<_SuiviPhotosTab> {
                                 : nomRaw2;
                   final url     = (doc['url'] as String? ?? '');
                   final hasImg  = url.startsWith('http') && (url.contains('.png') || url.contains('.jpg') || url.contains('.jpeg') || url.contains('.webp'));
-                  final isActive = _planActif?['id'] == doc['id'];
                   final pinCount = _defauts.where((d) => d['document_id'] == doc['id']).length;
 
                   return GestureDetector(
-                    onTap: () => setState(() => _planActif = isActive ? null : doc),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 180),
+                    onTap: () => _openPlanDialog(doc),
+                    child: Container(
                       width: cardW,
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: isActive ? kAccent : const Color(0xFFE5E7EB),
-                          width: isActive ? 2 : 1,
-                        ),
-                        boxShadow: isActive ? [BoxShadow(color: kAccent.withOpacity(0.2), blurRadius: 8, offset: const Offset(0, 2))] : [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 4)],
+                        border: Border.all(color: const Color(0xFFE5E7EB)),
+                        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 4)],
                       ),
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                         // Miniature
                         ClipRRect(
                           borderRadius: const BorderRadius.vertical(top: Radius.circular(11)),
                           child: SizedBox(
-                            height: cardW * 0.65,
-                            width: cardW,
+                            height: cardW * 0.65, width: cardW,
                             child: hasImg
                                 ? Image.network(url, fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) => _PlanPlaceholder(isActive: isActive))
-                                : _PlanPlaceholder(isActive: isActive),
+                                    errorBuilder: (_, __, ___) => const _PlanPlaceholder())
+                                : const _PlanPlaceholder(),
                           ),
                         ),
                         // Info
@@ -4987,8 +5196,7 @@ class _SuiviPhotosTabState extends State<_SuiviPhotosTab> {
                           padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
                           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                             Text(nom.isEmpty ? 'Plan sans nom' : nom,
-                                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700,
-                                    color: isActive ? kAccent : kTextMain),
+                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: kTextMain),
                                 overflow: TextOverflow.ellipsis),
                             const SizedBox(height: 4),
                             Row(children: [
@@ -5005,14 +5213,7 @@ class _SuiviPhotosTabState extends State<_SuiviPhotosTab> {
                                 const SizedBox(width: 6),
                               ],
                               const Spacer(),
-                              if (url.startsWith('http'))
-                                GestureDetector(
-                                  onTap: () async {
-                                    final uri = Uri.tryParse(url);
-                                    if (uri != null) try { await launchUrl(uri, mode: LaunchMode.externalApplication); } catch (_) {}
-                                  },
-                                  child: const Icon(LucideIcons.externalLink, size: 13, color: kTextSub),
-                                ),
+                              const Icon(LucideIcons.maximize2, size: 12, color: kTextSub),
                             ]),
                           ]),
                         ),
@@ -5021,10 +5222,6 @@ class _SuiviPhotosTabState extends State<_SuiviPhotosTab> {
                   );
                 }).toList());
               }),
-              const SizedBox(height: 14),
-
-              // Zone de pointage si un plan est sélectionné
-              if (_planActif != null) _buildZonePointage(_planActif!),
             ],
           ]),
         ),
@@ -5090,73 +5287,6 @@ class _SuiviPhotosTabState extends State<_SuiviPhotosTab> {
     );
   }
 
-  Widget _buildZonePointage(Map<String, dynamic> doc) {
-    final nomRaw = (doc['nom'] as String? ?? '');
-    final nom    = nomRaw.contains('||META||') ? nomRaw.split('||META||')[0]
-                 : nomRaw.contains('')     ? nomRaw.split('')[0]
-                 : nomRaw;
-    final defautsDuDoc = _defauts.where((d) => d['document_id'] == doc['id']).toList();
-
-    return LayoutBuilder(builder: (ctx, cs) {
-      final W = cs.maxWidth;
-      final H = W * 0.6;
-      return Container(
-        width: W, height: H,
-        decoration: BoxDecoration(
-          color: const Color(0xFFF3F4F6),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: kAccent.withOpacity(0.3)),
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(10),
-          child: Stack(children: [
-            // Fond : image réelle si disponible, sinon plan générique
-            if ((doc['url'] as String? ?? '').startsWith('http'))
-              Positioned.fill(child: Image.network(
-                doc['url'] as String,
-                fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => CustomPaint(painter: _FloorPlanPainter(), size: Size(W, H)),
-              ))
-            else
-              CustomPaint(painter: _FloorPlanPainter(), size: Size(W, H)),
-            // Indicateur
-            Positioned(bottom: 8, left: 0, right: 0, child: Center(child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(color: Colors.black.withOpacity(0.55), borderRadius: BorderRadius.circular(20)),
-              child: Text('Tap sur le plan pour ajouter un pointage — $nom', style: const TextStyle(color: Colors.white, fontSize: 10)),
-            ))),
-            // Zone de clic
-            Positioned.fill(child: GestureDetector(onTapDown: (d) {
-              final rx = (d.localPosition.dx / W).clamp(0.0, 1.0);
-              final ry = (d.localPosition.dy / H).clamp(0.0, 1.0);
-              _showAddDefautDialog(rx, ry, doc['id'], nom);
-            })),
-            // Pins existants
-            ...defautsDuDoc.asMap().entries.map((e) {
-              final i = e.key; final def = e.value;
-              final x = ((def['x'] as num? ?? 0).toDouble() * W) - 14;
-              final y = ((def['y'] as num? ?? 0).toDouble() * H) - 14;
-              final estFait = def['statut'] == 'regle';
-              return Positioned(left: x, top: y, child: GestureDetector(
-                onTap: () => _snack(context, def['titre'] ?? '', estFait ? const Color(0xFF10B981) : kRed),
-                child: Container(
-                  width: 28, height: 28,
-                  decoration: BoxDecoration(
-                    color: estFait ? const Color(0xFF10B981) : kRed,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white, width: 2),
-                    boxShadow: [BoxShadow(color: (estFait ? const Color(0xFF10B981) : kRed).withOpacity(0.4), blurRadius: 6)],
-                  ),
-                  child: Center(child: Text('${i+1}', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800))),
-                ),
-              ));
-            }),
-          ]),
-        ),
-      );
-    });
-  }
-
   Widget _chip(String label, Color color) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
     decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
@@ -5202,7 +5332,16 @@ class _SuiviPhotosTabState extends State<_SuiviPhotosTab> {
                 rows.add(Row(children: [
                   for (int j = 0; j < rowItems.length; j++) ...[
                     if (j > 0) const SizedBox(width: 10),
-                    Expanded(child: _PhotoCard(photo: rowItems[j], onDelete: () => _supprimerPhoto(rowItems[j]))),
+                    Expanded(child: _PhotoCard(
+                      photo: rowItems[j],
+                      onDelete: () => _supprimerPhoto(rowItems[j]),
+                      onTap: () {
+                        final u = rowItems[j]['url'] as String? ?? '';
+                        final n = rowItems[j]['nom'] as String? ?? '';
+                        final d = rowItems[j]['uploaded_at'] as String? ?? '';
+                        if (u.isNotEmpty && !u.startsWith('fichier:')) _openPhotoPopup(context, u, n, d);
+                      },
+                    )),
                   ],
                   if (rowItems.length < cols) ...[const SizedBox(width: 10), const Expanded(child: SizedBox())],
                 ]));
@@ -5261,7 +5400,6 @@ class _SuiviPhotosTabState extends State<_SuiviPhotosTab> {
               const SizedBox(width: 8),
               const Text('Comptes-Rendus de Chantier (CRC)', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: kTextMain)),
               const Spacer(),
-              Text('${_crcs.length} rapport(s)', style: const TextStyle(color: kTextSub, fontSize: 12)),
             ]),
             const SizedBox(height: 14),
             if (_loadingCRC)
@@ -5365,16 +5503,203 @@ class _SuiviPhotosTabState extends State<_SuiviPhotosTab> {
 }
 
 // ── Painters & Cards ─────────────────────────────────────────────────────────
+// ── Popup plan pointage ───────────────────────────────────────────────────────
+class _PlanPointageDialog extends StatefulWidget {
+  final Map<String, dynamic> doc;
+  final String projectId;
+  final VoidCallback onChanged;
+  const _PlanPointageDialog({required this.doc, required this.projectId, required this.onChanged});
+  @override State<_PlanPointageDialog> createState() => _PlanPointageDialogState();
+}
+
+class _PlanPointageDialogState extends State<_PlanPointageDialog> {
+  List<Map<String, dynamic>> _defauts = [];
+  bool _loading = true;
+  final TransformationController _ctrl = TransformationController();
+  Offset?   _tapDown;
+  DateTime? _tapTime;
+
+  @override
+  void initState() { super.initState(); _load(); }
+
+  @override
+  void dispose() { _ctrl.dispose(); super.dispose(); }
+
+  Future<void> _load() async {
+    try {
+      final data = await Supabase.instance.client
+          .from('defauts').select()
+          .eq('projet_id', widget.projectId)
+          .eq('document_id', widget.doc['id'])
+          .order('created_at', ascending: true);
+      if (mounted) setState(() { _defauts = List<Map<String,dynamic>>.from(data); _loading = false; });
+    } catch (_) { if (mounted) setState(() => _loading = false); }
+  }
+
+  String get _nom {
+    final raw = widget.doc['nom'] as String? ?? '';
+    if (raw.contains('||META||')) return raw.split('||META||')[0];
+    final parts = raw.split('');
+    return parts.isNotEmpty ? parts[0] : raw;
+  }
+
+  void _showAddDialog(double rx, double ry) {
+    final ctrl = TextEditingController();
+    showDialog(context: context, builder: (_) => Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 380), child: Column(mainAxisSize: MainAxisSize.min, children: [
+        _DialogHeader(icon: LucideIcons.mapPin, title: 'Nouveau pointage', subtitle: 'Décrivez le défaut ou la remarque'),
+        Padding(padding: const EdgeInsets.all(20), child: _DField(icon: LucideIcons.alertTriangle, label: 'DESCRIPTION *', hint: 'Ex: Fissure sur le mur nord', controller: ctrl, maxLines: 2)),
+        _DialogActions(onCancel: () => Navigator.pop(context), onConfirm: () async {
+          final t = ctrl.text.trim();
+          if (t.isEmpty) { _snack(context, 'Description obligatoire', kRed); return; }
+          try {
+            await Supabase.instance.client.from('defauts').insert({
+              'projet_id':    widget.projectId,
+              'document_id':  widget.doc['id'],
+              'document_nom': _nom,
+              'titre':        t,
+              'statut':       'a_faire',
+              'x': rx, 'y': ry,
+            });
+            Navigator.pop(context);
+            _snack(context, 'Pointage ajouté', kAccent);
+            await _load();
+            widget.onChanged();
+          } catch (_) { _snack(context, 'Erreur sauvegarde', kRed); }
+        }, label: 'Ajouter'),
+      ])),
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final url    = widget.doc['url'] as String? ?? '';
+    final hasImg = url.startsWith('http');
+    final nom    = _nom;
+
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: 700, maxHeight: MediaQuery.of(context).size.height * 0.85),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+            decoration: BoxDecoration(
+              color: kAccent.withOpacity(0.07),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+              border: Border(bottom: BorderSide(color: kAccent.withOpacity(0.15))),
+            ),
+            child: Row(children: [
+              Container(padding: const EdgeInsets.all(7), decoration: BoxDecoration(color: kRed.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
+                  child: const Icon(LucideIcons.mapPin, size: 15, color: kRed)),
+              const SizedBox(width: 10),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(nom.isEmpty ? 'Plan' : nom, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: kTextMain), overflow: TextOverflow.ellipsis),
+                Text('${_defauts.length} pointage(s) · Tap pour ajouter', style: const TextStyle(color: kTextSub, fontSize: 11)),
+              ])),
+              IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close, size: 20, color: kTextSub), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+            ]),
+          ),
+          // Plan zoomable
+          Flexible(child: LayoutBuilder(builder: (ctx, cs) {
+            final W = cs.maxWidth;
+            final H = (W * 0.65).clamp(200.0, 520.0);
+            return SizedBox(width: W, height: H,
+              child: Listener(
+                onPointerDown: (e) { _tapDown = e.localPosition; _tapTime = DateTime.now(); },
+                onPointerUp: (e) {
+                  final d = _tapDown; final t = _tapTime;
+                  if (d != null && t != null &&
+                      (e.localPosition - d).distance < 12 &&
+                      DateTime.now().difference(t) < const Duration(milliseconds: 300)) {
+                    final s = _ctrl.toScene(e.localPosition);
+                    _showAddDialog((s.dx / W).clamp(0.0, 1.0), (s.dy / H).clamp(0.0, 1.0));
+                  }
+                },
+                child: Stack(children: [
+                  Positioned.fill(child: InteractiveViewer(
+                    transformationController: _ctrl,
+                    minScale: 1.0, maxScale: 5.0,
+                    child: SizedBox(width: W, height: H, child: Stack(children: [
+                      Positioned.fill(child: hasImg
+                        ? Image.network(url, fit: BoxFit.contain,
+                            errorBuilder: (_, __, ___) => CustomPaint(painter: _FloorPlanPainter(), size: Size(W, H)))
+                        : CustomPaint(painter: _FloorPlanPainter(), size: Size(W, H))),
+                      if (_loading)
+                        const Positioned.fill(child: Center(child: CircularProgressIndicator(color: kAccent)))
+                      else
+                        ..._defauts.asMap().entries.map((e) {
+                          final i = e.key; final def = e.value;
+                          final x = (def['x'] as num? ?? 0).toDouble() * W - 14;
+                          final y = (def['y'] as num? ?? 0).toDouble() * H - 14;
+                          final ok = def['statut'] == 'regle';
+                          return Positioned(left: x, top: y, child: Tooltip(
+                            message: def['titre'] ?? '',
+                            child: Container(
+                              width: 28, height: 28,
+                              decoration: BoxDecoration(
+                                color: ok ? const Color(0xFF10B981) : kRed, shape: BoxShape.circle,
+                                border: Border.all(color: Colors.white, width: 2),
+                                boxShadow: [BoxShadow(color: (ok ? const Color(0xFF10B981) : kRed).withOpacity(0.4), blurRadius: 6)],
+                              ),
+                              child: Center(child: Text('${i+1}', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800))),
+                            ),
+                          ));
+                        }),
+                    ])),
+                  )),
+                  // Hint
+                  Positioned(bottom: 8, left: 0, right: 0, child: Center(child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(color: Colors.black.withOpacity(0.55), borderRadius: BorderRadius.circular(20)),
+                    child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(LucideIcons.zoomIn, size: 11, color: Colors.white),
+                      SizedBox(width: 5),
+                      Text('Pincez pour zoomer · Tap pour pointer', style: TextStyle(color: Colors.white, fontSize: 10)),
+                    ]),
+                  ))),
+                  // Reset zoom
+                  Positioned(top: 8, right: 8, child: GestureDetector(
+                    onTap: () => setState(() => _ctrl.value = Matrix4.identity()),
+                    child: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(color: Colors.black.withOpacity(0.45), borderRadius: BorderRadius.circular(6)),
+                      child: const Icon(LucideIcons.maximize2, size: 13, color: Colors.white),
+                    ),
+                  )),
+                ]),
+              ),
+            );
+          })),
+          // Footer
+          Container(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+            decoration: const BoxDecoration(border: Border(top: BorderSide(color: Color(0xFFE5E7EB)))),
+            child: SizedBox(width: double.infinity, child: OutlinedButton(
+              onPressed: () => Navigator.pop(context),
+              style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 11),
+                  side: const BorderSide(color: Color(0xFFD1D5DB)), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+              child: const Text('Fermer', style: TextStyle(color: kTextSub, fontWeight: FontWeight.w600)),
+            )),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
 class _PlanPlaceholder extends StatelessWidget {
-  final bool isActive;
-  const _PlanPlaceholder({this.isActive = false});
+  const _PlanPlaceholder();
   @override
   Widget build(BuildContext context) => Container(
-    color: isActive ? kAccent.withOpacity(0.08) : const Color(0xFFF3F4F6),
+    color: const Color(0xFFF3F4F6),
     child: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-      Icon(LucideIcons.penTool, size: 24, color: isActive ? kAccent.withOpacity(0.5) : kTextSub.withOpacity(0.3)),
+      Icon(LucideIcons.penTool, size: 24, color: kTextSub.withOpacity(0.3)),
       const SizedBox(height: 6),
-      Text('Plan', style: TextStyle(fontSize: 10, color: isActive ? kAccent.withOpacity(0.6) : kTextSub.withOpacity(0.4), fontWeight: FontWeight.w600)),
+      Text('Plan', style: TextStyle(fontSize: 10, color: kTextSub.withOpacity(0.4), fontWeight: FontWeight.w600)),
     ])),
   );
 }
@@ -5405,21 +5730,34 @@ class _FloorPlanPainter extends CustomPainter {
 class _PhotoCard extends StatelessWidget {
   final Map<String, dynamic> photo;
   final VoidCallback onDelete;
-  const _PhotoCard({required this.photo, required this.onDelete});
+  final VoidCallback? onTap;
+  const _PhotoCard({required this.photo, required this.onDelete, this.onTap});
   @override
   Widget build(BuildContext context) {
     final url  = photo['url']  as String? ?? '';
     final nom  = photo['nom']  as String? ?? '';
     final date = photo['uploaded_at'] as String? ?? '';
+    final hasImg = url.isNotEmpty && !url.startsWith('fichier:');
     return Container(
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB)), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 6, offset: const Offset(0, 2))]),
       clipBehavior: Clip.hardEdge,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        AspectRatio(
-          aspectRatio: 4/3,
-          child: url.isNotEmpty && !url.startsWith('fichier:')
-              ? Image.network(url, fit: BoxFit.cover, errorBuilder: (_, __, ___) => Container(color: const Color(0xFFF3F4F6), child: const Icon(LucideIcons.image, size: 32, color: kTextSub)))
-              : Container(color: const Color(0xFFF3F4F6), child: const Icon(LucideIcons.image, size: 32, color: kTextSub)),
+        GestureDetector(
+          onTap: hasImg ? onTap : null,
+          child: AspectRatio(
+            aspectRatio: 4/3,
+            child: Stack(fit: StackFit.expand, children: [
+              hasImg
+                  ? Image.network(url, fit: BoxFit.cover, errorBuilder: (_, __, ___) => Container(color: const Color(0xFFF3F4F6), child: const Icon(LucideIcons.image, size: 32, color: kTextSub)))
+                  : Container(color: const Color(0xFFF3F4F6), child: const Icon(LucideIcons.image, size: 32, color: kTextSub)),
+              if (hasImg && onTap != null)
+                Positioned(bottom: 6, right: 6, child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(5)),
+                  child: const Icon(LucideIcons.maximize2, size: 11, color: Colors.white),
+                )),
+            ]),
+          ),
         ),
         Padding(padding: const EdgeInsets.all(10), child: Row(children: [
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -5743,8 +6081,13 @@ class _CommentairesTabState extends State<_CommentairesTab> {
   final _scroll = ScrollController();
 
   bool _firstLoad = true;
+  int  _newClientCount = 0;
   final Set<String> _seenClientIds = {};
   RealtimeChannel? _channel;
+
+  String? _attachedFileName;
+  String? _attachedFileUrl;
+  bool    _uploadingFile = false;
 
   @override
   void initState() {
@@ -5777,19 +6120,24 @@ class _CommentairesTabState extends State<_CommentairesTab> {
 
   Future<void> _load() async {
     try {
-      final data = await CommentaireService.getCommentaires(widget.project.id);
+      final data  = await CommentaireService.getCommentaires(widget.project.id);
+      final prefs = await SharedPreferences.getInstance();
+      final key   = 'comments_last_seen_${widget.project.id}';
 
       if (_firstLoad) {
         _firstLoad = false;
-        // Initialise les IDs déjà connus — pas de notification au 1er chargement
-        _seenClientIds.addAll(
-          data.where((c) => c.role == 'client').map((c) => c.id),
-        );
+        // Utilisateur ouvre l'onglet : tout est "lu"
+        _seenClientIds.addAll(data.where((c) => c.role == 'client').map((c) => c.id));
+        _newClientCount = 0;
+        await prefs.setString(key, DateTime.now().toUtc().toIso8601String());
+        widget.onCountChanged(0);
       } else {
-        // Détecte les nouveaux messages client apparus depuis le dernier chargement
+        // Mise à jour temps réel : détecter les nouveaux messages client
+        int added = 0;
         for (final c in data.where((c) => c.role == 'client')) {
           if (!_seenClientIds.contains(c.id)) {
             _seenClientIds.add(c.id);
+            added++;
             NotificationService.add(
               message: '${c.auteur} : ${c.contenu.length > 80 ? '${c.contenu.substring(0, 80)}…' : c.contenu}',
               projet: widget.project.titre,
@@ -5797,30 +6145,75 @@ class _CommentairesTabState extends State<_CommentairesTab> {
             );
           }
         }
+        if (added > 0) {
+          _newClientCount += added;
+          widget.onCountChanged(_newClientCount);
+        }
       }
 
+      if (!mounted) return;
       setState(() { commentaires = data; loading = false; });
-      widget.onCountChanged(data.length);
       Future.delayed(const Duration(milliseconds: 120), () {
         if (_scroll.hasClients) _scroll.jumpTo(_scroll.position.maxScrollExtent);
       });
-    } catch (_) { setState(() => loading = false); }
+    } catch (_) { if (mounted) setState(() => loading = false); }
+  }
+
+  Future<void> _pickFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'png', 'jpg', 'jpeg', 'dwg', 'xlsx', 'doc', 'docx'],
+        withData: true,
+      );
+      if (result == null || result.files.isEmpty) return;
+      final file = result.files.first;
+      setState(() { _attachedFileName = file.name; _attachedFileUrl = null; _uploadingFile = true; });
+      if (file.bytes != null) {
+        final ext  = file.name.split('.').last.toLowerCase();
+        final ts   = DateTime.now().millisecondsSinceEpoch;
+        final path = 'commentaires/${widget.project.id}/${ts}_${file.name}';
+        final mime = ext == 'pdf' ? 'application/pdf'
+            : (ext == 'png' || ext == 'jpg' || ext == 'jpeg') ? 'image/$ext'
+            : 'application/octet-stream';
+        await Supabase.instance.client.storage
+            .from('documents')
+            .uploadBinary(path, file.bytes!, fileOptions: FileOptions(contentType: mime, upsert: true));
+        final url = Supabase.instance.client.storage.from('documents').getPublicUrl(path);
+        if (mounted) setState(() { _attachedFileUrl = url; _uploadingFile = false; });
+      } else {
+        setState(() => _uploadingFile = false);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() { _attachedFileName = null; _attachedFileUrl = null; _uploadingFile = false; });
+        _snack(context, 'Upload échoué : $e', kRed);
+      }
+    }
   }
 
   Future<void> _send() async {
     final raw = _ctrl.text.trim();
-    if (raw.isEmpty) { _snack(context, 'Message vide', kRed); return; }
-    final contenu = _replyingTo != null
-        ? '↩ En réponse à "${_replyingTo!.auteur}" :\n« ${_replyingTo!.contenu.length > 80 ? '${_replyingTo!.contenu.substring(0, 80)}…' : _replyingTo!.contenu} »\n\n$raw'
-        : raw;
+    final hasFile = _attachedFileUrl != null;
+    if (raw.isEmpty && !hasFile) { _snack(context, 'Message vide', kRed); return; }
+    if (_uploadingFile) { _snack(context, 'Upload en cours, patientez...', kAccent); return; }
+
+    String body = raw;
+    if (_replyingTo != null && raw.isNotEmpty) {
+      body = '↩ En réponse à "${_replyingTo!.auteur}" :\n« ${_replyingTo!.contenu.length > 80 ? '${_replyingTo!.contenu.substring(0, 80)}…' : _replyingTo!.contenu} »\n\n$raw';
+    }
+    if (hasFile) {
+      body = '$body||ATTACH||${_attachedFileName ?? 'fichier'}||$_attachedFileUrl';
+    }
+
     _ctrl.clear();
-    setState(() => _replyingTo = null);
+    setState(() { _replyingTo = null; _attachedFileName = null; _attachedFileUrl = null; });
     final nom = AuthService.currentUser?.fullName;
     final auteur = (nom != null && nom.isNotEmpty) ? nom : (widget.project.chef.isNotEmpty ? widget.project.chef : 'Architecte');
     await CommentaireService.addCommentaire(Commentaire(
       id: '', projetId: widget.project.id,
       auteur: auteur, role: 'architecte',
-      contenu: contenu, createdAt: DateTime.now().toIso8601String(),
+      contenu: body, createdAt: DateTime.now().toIso8601String(),
     ));
     _load();
   }
@@ -5845,7 +6238,7 @@ class _CommentairesTabState extends State<_CommentairesTab> {
           const SizedBox(width: 8),
           const Text('Fil de discussion', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: kTextMain)),
           const Spacer(),
-          _ConvBadge(label: 'Client', count: clientCount, color: const Color(0xFF8B5CF6)),
+          _ConvBadge(label: widget.project.client.isNotEmpty ? widget.project.client : 'Client', count: clientCount, color: const Color(0xFF8B5CF6)),
           const SizedBox(width: 8),
           _ConvBadge(label: 'Architecte', count: archiCount, color: kAccent),
         ]),
@@ -5863,6 +6256,7 @@ class _CommentairesTabState extends State<_CommentairesTab> {
               itemCount: commentaires.length,
               itemBuilder: (_, i) => _BubbleRow(
                 commentaire: commentaires[i],
+                clientName: widget.project.client,
                 onReply: (c) => setState(() {
                   _replyingTo = c;
                   Future.delayed(const Duration(milliseconds: 50), () => FocusScope.of(context).unfocus());
@@ -5896,6 +6290,35 @@ class _CommentairesTabState extends State<_CommentairesTab> {
           ]),
         ),
 
+      // ── File preview strip ──────────────────────────────────────────────
+      if (_attachedFileName != null) ...[
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: kAccent.withOpacity(0.06),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: kAccent.withOpacity(0.25)),
+          ),
+          child: Row(children: [
+            Icon(_uploadingFile ? LucideIcons.loader : LucideIcons.fileText, size: 14, color: kAccent),
+            const SizedBox(width: 8),
+            Expanded(child: Text(_attachedFileName!, style: const TextStyle(fontSize: 12, color: kAccent, fontWeight: FontWeight.w500), overflow: TextOverflow.ellipsis)),
+            const SizedBox(width: 8),
+            if (_uploadingFile)
+              const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: kAccent))
+            else ...[
+              Icon(_attachedFileUrl != null ? LucideIcons.checkCircle : LucideIcons.alertCircle, size: 14, color: _attachedFileUrl != null ? const Color(0xFF10B981) : kRed),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: () => setState(() { _attachedFileName = null; _attachedFileUrl = null; }),
+                child: const Icon(LucideIcons.x, size: 14, color: kTextSub),
+              ),
+            ],
+          ]),
+        ),
+      ],
+
       // ── Text input ──────────────────────────────────────────────────────
       const SizedBox(height: 8),
       Container(
@@ -5915,6 +6338,15 @@ class _CommentairesTabState extends State<_CommentairesTab> {
             ),
           )),
           const SizedBox(width: 8),
+          GestureDetector(
+            onTap: _uploadingFile ? null : _pickFile,
+            child: Container(
+              width: 34, height: 34,
+              decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(8)),
+              child: Icon(_uploadingFile ? LucideIcons.loader : LucideIcons.paperclip, size: 15, color: kTextSub),
+            ),
+          ),
+          const SizedBox(width: 6),
           GestureDetector(
             onTap: _send,
             child: Container(
@@ -5942,19 +6374,33 @@ class _ConvBadge extends StatelessWidget {
 
 class _BubbleRow extends StatelessWidget {
   final Commentaire commentaire;
+  final String clientName;
   final void Function(Commentaire) onReply;
-  const _BubbleRow({required this.commentaire, required this.onReply});
+  const _BubbleRow({required this.commentaire, required this.onReply, this.clientName = ''});
 
   @override
   Widget build(BuildContext context) {
     final isArchi = commentaire.role == 'architecte';
     final isReply = commentaire.contenu.startsWith('↩ En réponse à');
 
+    // Extract attachment if present
+    String? attachName;
+    String? attachUrl;
+    String rawContenu = commentaire.contenu;
+    const attachSep = '||ATTACH||';
+    if (rawContenu.contains(attachSep)) {
+      final idx = rawContenu.indexOf(attachSep);
+      final attachPart = rawContenu.substring(idx + attachSep.length);
+      rawContenu = rawContenu.substring(0, idx).trim();
+      final ap = attachPart.split('||');
+      if (ap.length >= 2) { attachName = ap[0]; attachUrl = ap[1]; }
+    }
+
     // Split quoted part from actual reply
     String? quotePart;
-    String mainContent = commentaire.contenu;
+    String mainContent = rawContenu;
     if (isArchi && isReply) {
-      final parts = commentaire.contenu.split('\n\n');
+      final parts = rawContenu.split('\n\n');
       if (parts.length >= 2) {
         quotePart = parts.sublist(0, parts.length - 1).join('\n\n');
         mainContent = parts.last;
@@ -5983,7 +6429,10 @@ class _BubbleRow extends StatelessWidget {
               Container(width: 28, height: 28, decoration: BoxDecoration(color: const Color(0xFF8B5CF6).withOpacity(0.12), shape: BoxShape.circle), child: const Icon(LucideIcons.user, size: 13, color: Color(0xFF8B5CF6))),
               const SizedBox(width: 8),
             ],
-            Text(commentaire.auteur, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: kTextMain)),
+            Text(
+              !isArchi && clientName.isNotEmpty ? clientName : commentaire.auteur,
+              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: kTextMain),
+            ),
             const SizedBox(width: 6),
             Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: badgeColor, borderRadius: BorderRadius.circular(4)), child: Text(badgeLabel, style: TextStyle(color: badgeTextColor, fontSize: 9, fontWeight: FontWeight.w800))),
             const SizedBox(width: 6),
@@ -6022,10 +6471,31 @@ class _BubbleRow extends StatelessWidget {
                   ),
                   child: Text(quotePart, style: const TextStyle(fontSize: 11, color: Colors.white70, fontStyle: FontStyle.italic, height: 1.3)),
                 ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-                child: Text(mainContent, style: TextStyle(color: textColor, fontSize: 13, height: 1.4)),
-              ),
+              if (mainContent.isNotEmpty)
+                Padding(
+                  padding: EdgeInsets.fromLTRB(14, 10, 14, attachName != null ? 4 : 10),
+                  child: Text(mainContent, style: TextStyle(color: textColor, fontSize: 13, height: 1.4)),
+                ),
+              if (attachName != null && attachUrl != null)
+                GestureDetector(
+                  onTap: () => _openAttachmentPopup(context, attachName!, attachUrl!),
+                  child: Container(
+                    margin: EdgeInsets.fromLTRB(10, mainContent.isEmpty ? 10 : 0, 10, 10),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(isArchi ? 0.18 : 0.7),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.white.withOpacity(0.35)),
+                    ),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(_iconForFileName(attachName!), size: 14, color: isArchi ? Colors.white : kAccent),
+                      const SizedBox(width: 8),
+                      Flexible(child: Text(attachName!, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: isArchi ? Colors.white : kAccent), overflow: TextOverflow.ellipsis)),
+                      const SizedBox(width: 8),
+                      Icon(LucideIcons.download, size: 12, color: isArchi ? Colors.white70 : kAccent),
+                    ]),
+                  ),
+                ),
             ]),
           ),
         ),

@@ -30,6 +30,11 @@ class MembreService {
     await supabase.from('membres').delete().eq('id', id);
   }
 
+  static Future<void> deleteMembreWithTaches(String id) async {
+    await supabase.from('membre_taches').delete().eq('membre_id', id);
+    await supabase.from('membres').delete().eq('id', id);
+  }
+
   // ── ASSIGN TO PROJECT ─────────────────────────────────────────────────────
   static Future<void> assignToProject({
     required String membreId,

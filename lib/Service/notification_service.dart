@@ -54,6 +54,14 @@ class NotificationService {
     required NotifType type,
   }) async {
     if (_uid == null) return;
+    final existing = await _db
+        .from('notifications')
+        .select('id')
+        .eq('user_id', _uid!)
+        .eq('message', message)
+        .eq('projet', projet)
+        .limit(1);
+    if ((existing as List).isNotEmpty) return;
     final now = DateTime.now();
     final date  = '${now.day.toString().padLeft(2,'0')}/${now.month.toString().padLeft(2,'0')}/${now.year}';
     final heure = '${now.hour.toString().padLeft(2,'0')}:${now.minute.toString().padLeft(2,'0')}';
