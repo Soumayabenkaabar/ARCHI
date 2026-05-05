@@ -1,5 +1,6 @@
 import 'dart:math' show max;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../constants/colors.dart';
@@ -662,11 +663,20 @@ class _GanttCard extends StatelessWidget {
   final List<Project> projects;
   const _GanttCard({required this.projects});
 
-  void _openFullscreen(BuildContext context) {
-    showDialog(
+  Future<void> _openFullscreen(BuildContext context) async {
+    // Force landscape for better Gantt readability on mobile
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    if (!context.mounted) {
+      await SystemChrome.setPreferredOrientations([]);
+      return;
+    }
+    await showDialog(
       context: context,
       barrierDismissible: true,
-      builder: (_) => Dialog.fullscreen(
+      builder: (dctx) => Dialog.fullscreen(
         child: Scaffold(
           backgroundColor: kBg,
           appBar: AppBar(
@@ -676,7 +686,7 @@ class _GanttCard extends StatelessWidget {
                 style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16)),
             leading: IconButton(
               icon: const Icon(Icons.close_rounded, color: Colors.white),
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () => Navigator.of(dctx).pop(),
             ),
           ),
           body: Padding(
@@ -686,6 +696,8 @@ class _GanttCard extends StatelessWidget {
         ),
       ),
     );
+    // Restore all orientations after dialog closes
+    await SystemChrome.setPreferredOrientations([]);
   }
 
   @override

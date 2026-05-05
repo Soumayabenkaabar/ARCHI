@@ -6,7 +6,8 @@ import '../service/notification_service.dart';
 
 class NotificationsScreen extends StatefulWidget {
   final VoidCallback? onNotifChanged;
-  const NotificationsScreen({super.key, this.onNotifChanged});
+  final void Function(String projetTitre, int tabIndex)? onNavigate;
+  const NotificationsScreen({super.key, this.onNotifChanged, this.onNavigate});
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
 }
@@ -51,6 +52,20 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       widget.onNotifChanged?.call();
     } catch (e) {
       _snack('Erreur : $e');
+    }
+  }
+
+  void _onTap(AppNotification n) {
+    _markRead(n.id);
+    widget.onNavigate?.call(n.projet, _tabForNotif(n));
+  }
+
+  int _tabForNotif(AppNotification n) {
+    switch (n.type) {
+      case NotifType.budget:      return 1; // Finances
+      case NotifType.commentaire: return 6; // Commentaires
+      case NotifType.document:    return 4; // Documents
+      default:                    return 0; // Planning & Tâches
     }
   }
 
@@ -186,7 +201,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   const SizedBox(height: 12),
                   ...nonLues.map((n) => Padding(
                     padding: const EdgeInsets.only(bottom: 10),
-                    child: _NotifCard(notif: n, onMarkRead: () => _markRead(n.id), onDelete: () => _delete(n.id)),
+                    child: _NotifCard(notif: n, onMarkRead: () => _markRead(n.id), onDelete: () => _delete(n.id), onTap: () => _onTap(n)),
                   )),
                   const SizedBox(height: 20),
                 ],
@@ -201,7 +216,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   const SizedBox(height: 12),
                   ...lues.map((n) => Padding(
                     padding: const EdgeInsets.only(bottom: 10),
-                    child: _NotifCard(notif: n, onMarkRead: null, onDelete: () => _delete(n.id)),
+                    child: _NotifCard(notif: n, onMarkRead: null, onDelete: () => _delete(n.id), onTap: () => _onTap(n)),
                   )),
                 ],
 
@@ -258,7 +273,8 @@ class _NotifCard extends StatelessWidget {
   final AppNotification notif;
   final VoidCallback? onMarkRead;
   final VoidCallback onDelete;
-  const _NotifCard({required this.notif, required this.onMarkRead, required this.onDelete});
+  final VoidCallback? onTap;
+  const _NotifCard({required this.notif, required this.onMarkRead, required this.onDelete, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -266,7 +282,9 @@ class _NotifCard extends StatelessWidget {
     final color = notif.typeColor;
     final isIA  = notif.type == NotifType.ia;
 
-    return Container(
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
       decoration: BoxDecoration(
         color: isIA && !isLue ? const Color(0xFFFAF5FF) : Colors.white,
         borderRadius: BorderRadius.circular(12),
@@ -334,6 +352,6 @@ class _NotifCard extends StatelessWidget {
           ]),
         ]),
       ),
-    );
+    ));
   }
 }

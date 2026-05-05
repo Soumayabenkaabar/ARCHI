@@ -259,7 +259,8 @@ class ProjetDetailScreen extends StatefulWidget {
   final Project project;
   final int projectIndex;
   final VoidCallback? onBack;
-  const ProjetDetailScreen({super.key, required this.project, required this.projectIndex, this.onBack});
+  final int initialTab;
+  const ProjetDetailScreen({super.key, required this.project, required this.projectIndex, this.onBack, this.initialTab = 0});
   @override State<ProjetDetailScreen> createState() => _ProjetDetailScreenState();
 }
 
@@ -279,7 +280,7 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
   void initState() {
     super.initState();
     _project = widget.project;
-    _tabController = TabController(length: _tabCount, vsync: this);
+    _tabController = TabController(length: _tabCount, vsync: this, initialIndex: widget.initialTab.clamp(0, _tabCount - 1));
     _loadCommentCount();
     _loadProgression();
     _subscribeRealtime();
@@ -2014,7 +2015,6 @@ class _FinancesTab extends StatefulWidget {
 class _FinancesTabState extends State<_FinancesTab> {
   List<Facture> _factures = [];
   bool _loading = true;
-  bool _notifiedBudget = false;
   RealtimeChannel? _channel;
 
   @override
@@ -2049,31 +2049,7 @@ class _FinancesTabState extends State<_FinancesTab> {
       final data = await FactureService.getFactures(widget.project.id);
       setState(() { _factures = data; _loading = false; });
       await ProjetService.syncBudgetDepense(widget.project.id);
-      _checkBudgetAlert();
     } catch (_) { setState(() => _loading = false); }
-  }
-
-  void _checkBudgetAlert() {
-    if (_notifiedBudget) return;
-    final total   = widget.project.budgetTotal;
-    final depense = _factures.fold(0.0, (s, f) => s + f.montant);
-    if (total <= 0) return;
-    final pct = depense / total;
-    if (pct >= 1.0) {
-      _notifiedBudget = true;
-      NotificationService.add(
-        message: 'Budget dépassé de ${(depense - total).toStringAsFixed(0)} DT (${(pct * 100).toStringAsFixed(0)}%)',
-        projet: widget.project.titre,
-        type: NotifType.budget,
-      );
-    } else if (pct >= 0.85) {
-      _notifiedBudget = true;
-      NotificationService.add(
-        message: 'Budget consommé à ${(pct * 100).toStringAsFixed(0)}% — ${(total - depense).toStringAsFixed(0)} DT restants',
-        projet: widget.project.titre,
-        type: NotifType.budget,
-      );
-    }
   }
 
   // ── Accesseurs ──────────────────────────────────────────────────────────────
@@ -2204,7 +2180,7 @@ class _FinancesTabState extends State<_FinancesTab> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _depasse ? kRed.withOpacity(0.25) : _approche ? const Color(0xFFFDE68A) : const Color(0xFFE5E7EB)),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
         boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8, offset: const Offset(0, 2))],
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -2213,21 +2189,6 @@ class _FinancesTabState extends State<_FinancesTab> {
           const Spacer(),
           Text('$pctDisplay%', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: barColor)),
         ]),
-        if (_depasse) ...[
-          const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-            decoration: BoxDecoration(color: kRed.withOpacity(0.07), borderRadius: BorderRadius.circular(8), border: Border.all(color: kRed.withOpacity(0.2))),
-            child: Row(children: [const Icon(LucideIcons.alertTriangle, size: 13, color: kRed), const SizedBox(width: 8), Text('Budget dépassé de ${widget.fmt(_ecart.abs())}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: kRed))]),
-          ),
-        ] else if (_approche) ...[
-          const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-            decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFFDE68A))),
-            child: Row(children: [const Icon(LucideIcons.alertCircle, size: 13, color: Color(0xFFD97706)), const SizedBox(width: 8), Text('Attention — ${widget.fmt(_budgetTotal - _totalFacture)} restants', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFFD97706)))]),
-          ),
-        ],
         const SizedBox(height: 12),
         // Barre empilée : devis + extras
         LayoutBuilder(builder: (ctx, cs) {
@@ -6141,7 +6102,7 @@ class _CommentairesTabState extends State<_CommentairesTab> {
             NotificationService.add(
               message: '${c.auteur} : ${c.contenu.length > 80 ? '${c.contenu.substring(0, 80)}…' : c.contenu}',
               projet: widget.project.titre,
-              type: NotifType.info,
+              type: NotifType.commentaire,
             );
           }
         }
@@ -6230,19 +6191,16 @@ class _CommentairesTabState extends State<_CommentairesTab> {
     return Padding(padding: EdgeInsets.all(pad), child: Column(children: [
       // ── Stats header ────────────────────────────────────────────────────
       Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        decoration: BoxDecoration(color: kCardBg, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB))),
-        child: Row(children: [
-          const Icon(LucideIcons.messageSquare, size: 15, color: kTextSub),
-          const SizedBox(width: 8),
-          const Text('Fil de discussion', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: kTextMain)),
-          const Spacer(),
-          _ConvBadge(label: widget.project.client.isNotEmpty ? widget.project.client : 'Client', count: clientCount, color: const Color(0xFF8B5CF6)),
-          const SizedBox(width: 8),
-          _ConvBadge(label: 'Architecte', count: archiCount, color: kAccent),
-        ]),
-      ),
+  margin: const EdgeInsets.only(bottom: 12),
+  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+  decoration: BoxDecoration(color: kCardBg, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB))),
+  child: Row(children: [
+    const Icon(LucideIcons.messageSquare, size: 15, color: kTextSub),
+    const SizedBox(width: 8),
+    const Text('Fil de discussion', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: kTextMain)),
+    // ✅ badges supprimés
+  ]),
+),
 
       // ── Message list ────────────────────────────────────────────────────
       Expanded(child: Container(
@@ -6325,8 +6283,6 @@ class _CommentairesTabState extends State<_CommentairesTab> {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(color: kCardBg, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB))),
         child: Row(children: [
-          Container(width: 30, height: 30, decoration: BoxDecoration(color: kAccent.withOpacity(0.1), shape: BoxShape.circle), child: const Icon(LucideIcons.user, size: 13, color: kAccent)),
-          const SizedBox(width: 10),
           Expanded(child: TextField(
             controller: _ctrl,
             onSubmitted: (_) => _send(),
@@ -6407,12 +6363,9 @@ class _BubbleRow extends StatelessWidget {
       }
     }
 
-    final bubbleColor    = isArchi ? kAccent : const Color(0xFF8B5CF6);
-    final bgColor        = isArchi ? kAccent : const Color(0xFFF5F3FF);
-    final textColor      = isArchi ? Colors.white : const Color(0xFF1F2937);
-    final badgeLabel     = isArchi ? 'ARCHITECTE' : 'CLIENT';
-    final badgeColor     = isArchi ? kAccent.withOpacity(0.1) : const Color(0xFF8B5CF6).withOpacity(0.1);
-    final badgeTextColor = isArchi ? kAccent : const Color(0xFF8B5CF6);
+    final bubbleColor = isArchi ? kAccent : const Color(0xFF8B5CF6);
+    final bgColor     = isArchi ? kAccent : const Color(0xFFF5F3FF);
+    final textColor   = isArchi ? Colors.white : const Color(0xFF1F2937);
 
     final dateStr = commentaire.createdAt.length >= 10
         ? commentaire.createdAt.substring(0, 10)
@@ -6429,13 +6382,6 @@ class _BubbleRow extends StatelessWidget {
               Container(width: 28, height: 28, decoration: BoxDecoration(color: const Color(0xFF8B5CF6).withOpacity(0.12), shape: BoxShape.circle), child: const Icon(LucideIcons.user, size: 13, color: Color(0xFF8B5CF6))),
               const SizedBox(width: 8),
             ],
-            Text(
-              !isArchi && clientName.isNotEmpty ? clientName : commentaire.auteur,
-              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: kTextMain),
-            ),
-            const SizedBox(width: 6),
-            Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: badgeColor, borderRadius: BorderRadius.circular(4)), child: Text(badgeLabel, style: TextStyle(color: badgeTextColor, fontSize: 9, fontWeight: FontWeight.w800))),
-            const SizedBox(width: 6),
             Text(dateStr, style: const TextStyle(color: kTextSub, fontSize: 10)),
             if (isArchi) ...[
               const SizedBox(width: 8),

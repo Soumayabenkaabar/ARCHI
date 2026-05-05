@@ -19,6 +19,8 @@ import 'screens/splash_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
 import 'service/auth_service.dart';
+import 'service/notification_checker.dart';
+import 'service/projet_service.dart';
 import 'widgets/sidebar_widget.dart';
 
 void main() async {
@@ -73,16 +75,35 @@ class _AppShellState extends State<_AppShell> {
   int _selectedIndex = 0;
   int _notifCount    = 0;
   Project? _detailProject;
+  int _initialTab    = 0;
 
   @override
   void initState() {
     super.initState();
-    _refreshNotifCount();
+    _runChecksAndRefresh();
+  }
+
+  Future<void> _runChecksAndRefresh() async {
+    await NotificationChecker.checkAll();
+    final count = await NotificationService.getUnreadCount();
+    if (mounted) setState(() => _notifCount = count);
   }
 
   Future<void> _refreshNotifCount() async {
     final count = await NotificationService.getUnreadCount();
     if (mounted) setState(() => _notifCount = count);
+  }
+
+  Future<void> _navigateFromNotif(String projetTitre, int tabIndex) async {
+    final projets = await ProjetService.getProjets();
+    final projet  = projets.where((p) => p.titre == projetTitre).firstOrNull;
+    if (projet != null && mounted) {
+      setState(() {
+        _detailProject = projet;
+        _initialTab    = tabIndex;
+        _selectedIndex = 1;
+      });
+    }
   }
 
   Widget _buildPage(int index) {
@@ -99,7 +120,13 @@ class _AppShellState extends State<_AppShell> {
       case 3:  return const EquipeScreen();
       case 4:  return const AnalyticsScreen();
       case 5:  return const CarteScreen();
-      case 6:  return NotificationsScreen(onNotifChanged: _refreshNotifCount);
+      case 6:  return NotificationsScreen(
+        onNotifChanged: () async {
+          await NotificationChecker.checkAll();
+          _refreshNotifCount();
+        },
+        onNavigate: _navigateFromNotif,
+      );
       case 7:  return const ParametresScreen();
       default: return _PlaceholderScreen(label: navItems[index].label);
     }
@@ -121,7 +148,8 @@ class _AppShellState extends State<_AppShell> {
         ? ProjetDetailScreen(
             project: _detailProject!,
             projectIndex: 0,
-            onBack: () => setState(() => _detailProject = null),
+            initialTab: _initialTab,
+            onBack: () => setState(() { _detailProject = null; _initialTab = 0; }),
           )
         : _buildPage(_selectedIndex);
 

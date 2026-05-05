@@ -226,10 +226,7 @@ class _EquipeScreenState extends State<EquipeScreen> {
             ),
             if (_tableVisible) ...[
               const SizedBox(height: 14),
-              if (isMobile) _MobileScrollHint(child:
-                _EquipeTable(membres: filtered, membresEnConge: _membresEnConge, tachesParMembre: _tachesParMembre, projets: _tousLesProjets),
-              ) else
-                _EquipeTable(membres: filtered, membresEnConge: _membresEnConge, tachesParMembre: _tachesParMembre, projets: _tousLesProjets),
+              _EquipeTable(membres: filtered, membresEnConge: _membresEnConge, tachesParMembre: _tachesParMembre, projets: _tousLesProjets),
             ],
 
             const SizedBox(height: 24),
@@ -967,7 +964,6 @@ class _CongeDialogState extends State<_CongeDialog> {
   DateTime? _dateDebut;
   DateTime? _dateFin;
   final _motifCtrl = TextEditingController();
-  bool _decalerTaches = true;
   bool _submitting = false;
 
   @override
@@ -1004,10 +1000,8 @@ class _CongeDialogState extends State<_CongeDialog> {
     setState(() => _submitting = true);
     try {
       await CongeService.addConge(membreId: widget.membre.id, dateDebut: _dateDebut!, dateFin: _dateFin!, motif: _motifCtrl.text.trim());
-      int delayed = 0;
-      if (_decalerTaches) delayed = await CongeService.applyTaskDelay(widget.membre, _dateDebut!, _dateFin!);
       widget.onRefresh();
-      _snack(delayed > 0 ? 'Congé enregistré · $delayed tâche(s) décalée(s)' : 'Congé enregistré avec succès', const Color(0xFF10B981));
+      _snack('Congé enregistré avec succès', const Color(0xFF10B981));
       _motifCtrl.clear();
       if (mounted) setState(() { _dateDebut = null; _dateFin = null; _submitting = false; });
       await _load();
@@ -1129,28 +1123,6 @@ class _CongeDialogState extends State<_CongeDialog> {
                     border:        OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
                     enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
                     focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: _kOrange, width: 2)),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                GestureDetector(
-                  onTap: () => setState(() => _decalerTaches = !_decalerTaches),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: _decalerTaches ? const Color(0xFFFFF7ED) : const Color(0xFFF9FAFB),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: _decalerTaches ? _kOrange.withOpacity(0.4) : const Color(0xFFE5E7EB)),
-                    ),
-                    child: Row(children: [
-                      const Icon(LucideIcons.calendarCheck, size: 16, color: _kOrange), const SizedBox(width: 10),
-                      const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text('Décaler les tâches automatiquement', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: kTextMain)),
-                        SizedBox(height: 2),
-                        Text('Reporter les tâches en cours qui chevauchent ce congé', style: TextStyle(color: kTextSub, fontSize: 11)),
-                      ])),
-                      Switch(value: _decalerTaches, onChanged: (v) => setState(() => _decalerTaches = v),
-                          activeColor: _kOrange, materialTapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                    ]),
                   ),
                 ),
               ]),
@@ -1346,6 +1318,7 @@ class _EquipeTableState extends State<_EquipeTable> {
   @override
   Widget build(BuildContext context) {
     if (widget.membres.isEmpty) return const SizedBox.shrink();
+    final isMobile = MediaQuery.of(context).size.width < 800;
     return Container(
       decoration: BoxDecoration(
         color: Colors.white, borderRadius: BorderRadius.circular(14),
@@ -1353,18 +1326,122 @@ class _EquipeTableState extends State<_EquipeTable> {
         boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8)],
       ),
       clipBehavior: Clip.hardEdge,
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _buildTableHeader(),
-        const Divider(height: 1, color: Color(0xFFE5E7EB)),
-        ...widget.membres.asMap().entries.map((e) {
-          final isLast = e.key == widget.membres.length - 1;
-          return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            _buildMembreRow(e.value),
-            if (_expanded.contains(e.value.id)) _buildDetailPanel(e.value),
-            if (!isLast) const Divider(height: 1, color: Color(0xFFEEEEEE)),
-          ]);
-        }),
-      ]),
+      child: isMobile ? _buildMobileView() : _buildDesktopView(),
+    );
+  }
+
+  Widget _buildDesktopView() => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    _buildTableHeader(),
+    const Divider(height: 1, color: Color(0xFFE5E7EB)),
+    ...widget.membres.asMap().entries.map((e) {
+      final isLast = e.key == widget.membres.length - 1;
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _buildMembreRow(e.value),
+        if (_expanded.contains(e.value.id)) _buildDetailPanel(e.value, isMobile: false),
+        if (!isLast) const Divider(height: 1, color: Color(0xFFEEEEEE)),
+      ]);
+    }),
+  ]);
+
+  Widget _buildMobileView() => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    ...widget.membres.asMap().entries.map((e) {
+      final m = e.value;
+      final isLast = e.key == widget.membres.length - 1;
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _buildMobileCard(m),
+        if (_expanded.contains(m.id)) _buildDetailPanel(m, isMobile: true),
+        if (!isLast) const Divider(height: 1, color: Color(0xFFEEEEEE)),
+      ]);
+    }),
+  ]);
+
+  Widget _buildMobileCard(Membre m) {
+    final nbT     = _nbTaches(m.id);
+    final periode = _periodeGlobale(m.id);
+    final enConge = widget.membresEnConge.contains(m.id);
+    final isExp   = _expanded.contains(m.id);
+    final loading = _loadingDetail.contains(m.id);
+
+    final today     = DateTime.now();
+    final todayDate = DateTime(today.year, today.month, today.day);
+    final aTache    = (widget.tachesParMembre[m.id] ?? []).any((t) {
+      if (t['statut'] != 'en_cours') return false;
+      final d = DateTime.tryParse(t['date_debut'] as String? ?? '');
+      final f = DateTime.tryParse(t['date_fin']   as String? ?? '');
+      if (d == null || f == null) return false;
+      return !todayDate.isBefore(DateTime(d.year, d.month, d.day)) &&
+             !todayDate.isAfter(DateTime(f.year, f.month, f.day));
+    });
+
+    final (sLabel, sColor, sBg, sIcon) = enConge
+        ? ('En congé',    const Color(0xFFF97316), const Color(0xFFFFF7ED), LucideIcons.umbrella)
+        : aTache
+            ? ('En mission',  kAccent,               const Color(0xFFFFFBEB), LucideIcons.zap)
+            : m.disponible
+                ? ('Disponible',  const Color(0xFF10B981), const Color(0xFFF0FDF4), LucideIcons.checkCircle)
+                : ('En activité', const Color(0xFF6366F1), const Color(0xFFF5F3FF), LucideIcons.briefcase);
+
+    return InkWell(
+      onTap: () => _toggle(m.id),
+      hoverColor: const Color(0xFFFAFAFA),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          // ── Ligne 1 : Avatar · Nom/Rôle · Statut · Chevron ─────────────
+          Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+            Container(
+              width: 42, height: 42,
+              decoration: BoxDecoration(color: kAccent.withOpacity(0.1), borderRadius: BorderRadius.circular(21)),
+              child: Center(child: Text(
+                m.nom.isNotEmpty ? m.nom[0].toUpperCase() : '?',
+                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: kAccent),
+              )),
+            ),
+            const SizedBox(width: 12),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(m.nom,  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: kTextMain), overflow: TextOverflow.ellipsis),
+              Text(m.role, style: const TextStyle(fontSize: 11, color: kTextSub), overflow: TextOverflow.ellipsis),
+            ])),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+              decoration: BoxDecoration(color: sBg, borderRadius: BorderRadius.circular(20)),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(sIcon, size: 11, color: sColor),
+                const SizedBox(width: 5),
+                Text(sLabel, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: sColor)),
+              ]),
+            ),
+            const SizedBox(width: 6),
+            loading
+                ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: kAccent))
+                : AnimatedRotation(
+                    turns: isExp ? 0.25 : 0,
+                    duration: const Duration(milliseconds: 180),
+                    child: Icon(LucideIcons.chevronRight, size: 15, color: nbT > 0 ? kAccent : kTextSub),
+                  ),
+          ]),
+          // ── Ligne 2 : Chips stats ────────────────────────────────────────
+          const SizedBox(height: 10),
+          Wrap(spacing: 8, runSpacing: 6, children: [
+            _MiniChip(
+              icon: LucideIcons.folderOpen,
+              label: '${m.projetsAssignes.length} projet${m.projetsAssignes.length > 1 ? 's' : ''}',
+              color: kAccent,
+            ),
+            _MiniChip(
+              icon: LucideIcons.listChecks,
+              label: '$nbT tâche${nbT > 1 ? 's' : ''}',
+              color: const Color(0xFF6366F1),
+            ),
+            if (periode != '—') _MiniChip(
+              icon: LucideIcons.calendarDays,
+              label: periode,
+              color: kTextSub,
+            ),
+          ]),
+        ]),
+      ),
     );
   }
 
@@ -1465,7 +1542,7 @@ class _EquipeTableState extends State<_EquipeTable> {
     );
   }
 
-  Widget _buildDetailPanel(Membre m) {
+  Widget _buildDetailPanel(Membre m, {bool isMobile = false}) {
     if (_loadingDetail.contains(m.id)) {
       return Container(color: const Color(0xFFF9FAFB), padding: const EdgeInsets.symmetric(vertical: 20),
           child: const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: kAccent))));
@@ -1480,19 +1557,21 @@ class _EquipeTableState extends State<_EquipeTable> {
       if (!byProjet.containsKey(projId)) byProjet[projId] = _ProjetDetailData(titre: projInfo?['titre'] as String? ?? '—', taches: []);
       byProjet[projId]!.taches.add(tache);
     }
+    final leftPad = isMobile ? 12.0 : 56.0;
     if (byProjet.isEmpty) {
-      return Container(color: const Color(0xFFF9FAFB), padding: const EdgeInsets.fromLTRB(56, 12, 16, 14),
+      return Container(color: const Color(0xFFF9FAFB),
+          padding: EdgeInsets.fromLTRB(leftPad, 12, 16, 14),
           child: const Text('Aucune tâche assignée.', style: TextStyle(fontSize: 12, color: kTextSub)));
     }
     return Container(
       color: const Color(0xFFF9FAFB),
-      padding: const EdgeInsets.fromLTRB(56, 14, 16, 14),
+      padding: EdgeInsets.fromLTRB(leftPad, 14, 16, 14),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start,
-          children: byProjet.entries.map((e) => _buildProjetBlock(e.key, e.value)).toList()),
+          children: byProjet.entries.map((e) => _buildProjetBlock(e.key, e.value, isMobile: isMobile)).toList()),
     );
   }
 
-  Widget _buildProjetBlock(String projId, _ProjetDetailData data) {
+  Widget _buildProjetBlock(String projId, _ProjetDetailData data, {bool isMobile = false}) {
     final taches = List<Map<String, dynamic>>.from(data.taches)..sort((a, b) {
       final da = DateTime.tryParse(a['date_debut'] as String? ?? '');
       final db = DateTime.tryParse(b['date_debut'] as String? ?? '');
@@ -1507,6 +1586,7 @@ class _EquipeTableState extends State<_EquipeTable> {
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0xFFE5E7EB))),
       clipBehavior: Clip.hardEdge,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // ── Entête projet ─────────────────────────────────────────────────
         Container(
           padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
           decoration: BoxDecoration(color: projColor.withOpacity(0.06), border: Border(bottom: BorderSide(color: projColor.withOpacity(0.2)))),
@@ -1522,29 +1602,75 @@ class _EquipeTableState extends State<_EquipeTable> {
             ),
           ]),
         ),
-        const Padding(
-          padding: EdgeInsets.fromLTRB(14, 8, 14, 4),
-          child: Row(children: [
-            Expanded(flex: 4, child: Text('NOM DE LA TÂCHE', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5))),
-            Expanded(flex: 3, child: Text('PÉRIODE',         style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5))),
-            SizedBox(width: 52, child: Text('DURÉE',  style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5), textAlign: TextAlign.center)),
-            SizedBox(width: 80, child: Text('STATUT', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5), textAlign: TextAlign.center)),
-          ]),
-        ),
-        const Divider(height: 1, color: Color(0xFFF3F4F6)),
-        ...taches.asMap().entries.map((te) => _buildTacheRow(te.value, projColor, te.key == taches.length - 1)),
+        // ── En-tête colonnes (desktop uniquement) ─────────────────────────
+        if (!isMobile) ...[
+          const Padding(
+            padding: EdgeInsets.fromLTRB(14, 8, 14, 4),
+            child: Row(children: [
+              Expanded(flex: 4, child: Text('NOM DE LA TÂCHE', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5))),
+              Expanded(flex: 3, child: Text('PÉRIODE',         style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5))),
+              SizedBox(width: 52, child: Text('DURÉE',  style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5), textAlign: TextAlign.center)),
+              SizedBox(width: 80, child: Text('STATUT', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.5), textAlign: TextAlign.center)),
+            ]),
+          ),
+          const Divider(height: 1, color: Color(0xFFF3F4F6)),
+        ],
+        ...taches.asMap().entries.map((te) => _buildTacheRow(te.value, projColor, te.key == taches.length - 1, isMobile: isMobile)),
       ]),
     );
   }
 
-  Widget _buildTacheRow(Map<String, dynamic> t, Color projColor, bool isLast) {
-    final titre  = t['titre']     as String? ?? '—';
-    final d      = DateTime.tryParse(t['date_debut'] as String? ?? '');
-    final f      = DateTime.tryParse(t['date_fin']   as String? ?? '');
-    final si     = _statutInfo(t);
+  Widget _buildTacheRow(Map<String, dynamic> t, Color projColor, bool isLast, {bool isMobile = false}) {
+    final titre      = t['titre']     as String? ?? '—';
+    final d          = DateTime.tryParse(t['date_debut'] as String? ?? '');
+    final f          = DateTime.tryParse(t['date_fin']   as String? ?? '');
+    final si         = _statutInfo(t);
     final periodeStr = (d != null && f != null) ? '${_fmtDate(d)} → ${_fmtDate(f)}' : (d != null ? 'Début : ${_fmtDate(d)}' : '—');
     final dureeStr   = (d != null && f != null) ? _duree(d, f) : '—';
 
+    if (isMobile) {
+      return Column(children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            // Ligne 1 : point · titre · badge statut
+            Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+              Container(width: 6, height: 6, margin: const EdgeInsets.only(right: 8),
+                  decoration: BoxDecoration(color: projColor.withOpacity(0.7), shape: BoxShape.circle)),
+              Expanded(child: Text(titre,
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kTextMain),
+                  overflow: TextOverflow.ellipsis)),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(color: si.bg, borderRadius: BorderRadius.circular(12)),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(si.icon, size: 10, color: si.fg), const SizedBox(width: 4),
+                  Text(si.label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: si.fg)),
+                ]),
+              ),
+            ]),
+            const SizedBox(height: 6),
+            // Ligne 2 : calendrier · période · badge durée
+            Row(children: [
+              const Icon(LucideIcons.calendar, size: 10, color: kTextSub), const SizedBox(width: 4),
+              Expanded(child: Text(periodeStr,
+                  style: const TextStyle(fontSize: 10, color: kTextSub), overflow: TextOverflow.ellipsis)),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(6)),
+                child: Text(dureeStr,
+                    style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: kTextMain)),
+              ),
+            ]),
+          ]),
+        ),
+        if (!isLast) const Divider(height: 1, color: Color(0xFFF5F5F5), indent: 12),
+      ]);
+    }
+
+    // Layout desktop
     return Column(children: [
       Padding(
         padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
@@ -1588,6 +1714,24 @@ class _ProjetDetailData {
 // ══════════════════════════════════════════════════════════════════════════════
 //  GANTT — PLANNING DE L'ÉQUIPE
 // ══════════════════════════════════════════════════════════════════════════════
+class _MiniChip extends StatelessWidget {
+  final IconData icon;
+  final String   label;
+  final Color    color;
+  const _MiniChip({required this.icon, required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+    decoration: BoxDecoration(color: color.withOpacity(0.09), borderRadius: BorderRadius.circular(16)),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      Icon(icon, size: 11, color: color),
+      const SizedBox(width: 5),
+      Text(label, style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w600)),
+    ]),
+  );
+}
+
 class _GanttView extends StatefulWidget {
   final List<Membre>  membres;
   final Map<String, List<Map<String, dynamic>>> tachesParMembre;
@@ -1599,11 +1743,14 @@ class _GanttView extends StatefulWidget {
   State<_GanttView> createState() => _GanttViewState();
 }
 
+enum _GanttMode { jour, semaine, mois }
+
 class _GanttViewState extends State<_GanttView> {
   final _scroll = ScrollController();
-  // _dayW is resolved from screen width in build(); other dims are fixed.
   double _dayW = 26.0;
-  static const double _rowH = 54.0, _headerH = 42.0, _leftW = 164.0;
+  static const double _rowH = 54.0, _headerH = 42.0;
+  double _leftW = 164.0;
+  _GanttMode _mode = _GanttMode.mois;
   late DateTime _start, _end;
   late int _totalDays;
   late Map<String, List<Conge>> _congesParMembre;
@@ -1655,7 +1802,10 @@ class _GanttViewState extends State<_GanttView> {
     if (widget.membres.isEmpty) return const SizedBox.shrink();
     // Adaptive day width: narrower on small screens for better readability.
     final sw = MediaQuery.of(context).size.width;
-    _dayW = sw < 480 ? 18.0 : sw < 700 ? 21.0 : sw < 1000 ? 24.0 : 26.0;
+    _leftW = sw < 480 ? 120.0 : sw < 700 ? 150.0 : 164.0;
+    _dayW  = _mode == _GanttMode.jour    ? (sw < 480 ? 44.0 : sw < 700 ? 52.0 : 60.0)
+           : _mode == _GanttMode.semaine ? (sw < 480 ? 28.0 : 38.0)
+           :                               (sw < 480 ? 18.0 : sw < 700 ? 21.0 : sw < 1000 ? 24.0 : 26.0);
 
     return Container(
       decoration: BoxDecoration(
@@ -1685,11 +1835,45 @@ class _GanttViewState extends State<_GanttView> {
     final usedProjets = widget.projets.where((p) => usedIds.contains(p.id)).toList();
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
-      child: Wrap(spacing: 14, runSpacing: 8, children: [
-        ...usedProjets.map((p) { final idx = widget.projets.indexOf(p); return _legendDot(color: _kProjectColors[(idx < 0 ? 0 : idx) % _kProjectColors.length], label: p.titre); }),
-        _legendDot(color: const Color(0xFFF59E0B), label: 'Congé / Absence'),
-        _legendDot(color: const Color(0xFFE2E8F0), label: 'Week-end', border: true),
-        _legendDot(color: const Color(0xFFEF4444).withOpacity(0.5), label: "Aujourd'hui"),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // ── Barre de contrôles ──────────────────────────────────────────
+        Row(children: [
+          // Toggle Semaine / Mois
+          Container(
+            decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(8)),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              _ViewBtn(label: 'Jour',    active: _mode == _GanttMode.jour,    onTap: () => setState(() { _mode = _GanttMode.jour;    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToToday()); })),
+              _ViewBtn(label: 'Semaine', active: _mode == _GanttMode.semaine, onTap: () => setState(() { _mode = _GanttMode.semaine; WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToToday()); })),
+              _ViewBtn(label: 'Mois',   active: _mode == _GanttMode.mois,    onTap: () => setState(() { _mode = _GanttMode.mois;    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToToday()); })),
+            ]),
+          ),
+          const SizedBox(width: 10),
+          // Bouton Aujourd'hui
+          GestureDetector(
+            onTap: _scrollToToday,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEF4444).withOpacity(0.08),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFEF4444).withOpacity(0.3)),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(LucideIcons.calendarDays, size: 12, color: Color(0xFFEF4444)),
+                const SizedBox(width: 5),
+                const Text("Aujourd'hui", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFFEF4444))),
+              ]),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 10),
+        // ── Légende ─────────────────────────────────────────────────────
+        Wrap(spacing: 14, runSpacing: 8, children: [
+          ...usedProjets.map((p) { final idx = widget.projets.indexOf(p); return _legendDot(color: _kProjectColors[(idx < 0 ? 0 : idx) % _kProjectColors.length], label: p.titre); }),
+          _legendDot(color: const Color(0xFFF59E0B), label: 'Congé / Absence'),
+          _legendDot(color: const Color(0xFFE2E8F0), label: 'Week-end', border: true),
+          _legendDot(color: const Color(0xFFEF4444).withOpacity(0.5), label: "Aujourd'hui"),
+        ]),
       ]),
     );
   }
@@ -1703,21 +1887,59 @@ class _GanttViewState extends State<_GanttView> {
   Widget _nameHeader() => Container(height: _headerH, color: const Color(0xFFF9FAFB), padding: const EdgeInsets.symmetric(horizontal: 14), alignment: Alignment.centerLeft,
       child: const Text('MEMBRE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: kTextSub, letterSpacing: 0.8)));
 
-  Widget _buildNameCell(Membre m) => Container(
-    height: _rowH, width: _leftW, padding: const EdgeInsets.symmetric(horizontal: 14),
-    decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Color(0xFFEEEEEE)))),
-    child: Row(children: [
-      Container(width: 30, height: 30, decoration: BoxDecoration(color: kAccent.withOpacity(0.12), borderRadius: BorderRadius.circular(15)),
-          child: const Icon(LucideIcons.user, color: kAccent, size: 14)),
-      const SizedBox(width: 8),
-      Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(m.nom, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kTextMain), overflow: TextOverflow.ellipsis, maxLines: 1),
-        Text(m.role, style: const TextStyle(fontSize: 10, color: kTextSub), overflow: TextOverflow.ellipsis, maxLines: 1),
-      ])),
-    ]),
-  );
+  Widget _buildNameCell(Membre m) {
+    final narrow = _leftW <= 120;
+    final av     = narrow ? 26.0 : 30.0;
+    final hPad   = narrow ? 8.0  : (_leftW <= 150 ? 10.0 : 14.0);
+    return Container(
+      height: _rowH, width: _leftW,
+      padding: EdgeInsets.symmetric(horizontal: hPad),
+      decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Color(0xFFEEEEEE)))),
+      child: Row(children: [
+        Container(
+          width: av, height: av,
+          decoration: BoxDecoration(color: kAccent.withOpacity(0.12), borderRadius: BorderRadius.circular(av / 2)),
+          child: Center(child: Text(
+            m.nom.isNotEmpty ? m.nom[0].toUpperCase() : '?',
+            style: TextStyle(fontSize: narrow ? 11 : 13, fontWeight: FontWeight.w800, color: kAccent),
+          )),
+        ),
+        SizedBox(width: narrow ? 6 : 8),
+        Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(m.nom,
+            style: TextStyle(fontSize: narrow ? 11 : 12, fontWeight: FontWeight.w600, color: kTextMain),
+            overflow: TextOverflow.ellipsis,
+            maxLines: narrow ? 2 : 1,
+          ),
+          if (!narrow) Text(m.role,
+            style: const TextStyle(fontSize: 10, color: kTextSub),
+            overflow: TextOverflow.ellipsis, maxLines: 1,
+          ),
+        ])),
+      ]),
+    );
+  }
+
+  static const _kDays = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 
   Widget _buildHeader() {
+    switch (_mode) {
+      case _GanttMode.jour:    return _buildDayHeader();
+      case _GanttMode.semaine: return _buildWeekHeader();
+      case _GanttMode.mois:    return _buildMonthHeader();
+    }
+  }
+
+  Widget _buildDayHeader() {
+    final segs = <({int days, String label})>[];
+    for (int i = 0; i < _totalDays; i++) {
+      final d = _start.add(Duration(days: i));
+      segs.add((days: 1, label: '${_kDays[d.weekday - 1]}\n${d.day}'));
+    }
+    return _headerRow(segs);
+  }
+
+  Widget _buildMonthHeader() {
     final segs = <({int days, String label})>[];
     DateTime cur = _start;
     while (cur.isBefore(_end)) {
@@ -1726,7 +1948,28 @@ class _GanttViewState extends State<_GanttView> {
       segs.add((days: segEnd.difference(cur).inDays, label: _monthLabel(cur)));
       cur = next;
     }
-    return SizedBox(height: _headerH, child: Stack(children: [
+    return _headerRow(segs);
+  }
+
+  Widget _buildWeekHeader() {
+    final segs = <({int days, String label})>[];
+    // Align to start of week (Monday)
+    DateTime cur = _start.subtract(Duration(days: (_start.weekday - 1) % 7));
+    while (cur.isBefore(_end)) {
+      final weekEnd = cur.add(const Duration(days: 7));
+      final segEnd  = weekEnd.isAfter(_end) ? _end : weekEnd;
+      final daysInRange = segEnd.difference(cur.isBefore(_start) ? _start : cur).inDays;
+      if (daysInRange > 0) {
+        final d = cur.isBefore(_start) ? _start : cur;
+        segs.add((days: daysInRange, label: '${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}'));
+      }
+      cur = weekEnd;
+    }
+    return _headerRow(segs);
+  }
+
+  Widget _headerRow(List<({int days, String label})> segs) =>
+    SizedBox(height: _headerH, child: Stack(children: [
       Container(width: _totalDays * _dayW, color: const Color(0xFFF9FAFB)),
       ..._weekendPositioned(height: _headerH, opacity: 0.45),
       _todayLine(height: _headerH),
@@ -1736,7 +1979,6 @@ class _GanttViewState extends State<_GanttView> {
         child: Text(s.label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: kTextMain), overflow: TextOverflow.ellipsis),
       )).toList()),
     ]));
-  }
 
   static const _kMonths = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
   String _monthLabel(DateTime d) => '${_kMonths[d.month - 1]} ${d.year}';
@@ -1800,4 +2042,32 @@ class _GanttViewState extends State<_GanttView> {
           ]) : null,
         )));
   }
+}
+
+class _ViewBtn extends StatelessWidget {
+  final String label;
+  final bool   active;
+  final VoidCallback onTap;
+  const _ViewBtn({required this.label, required this.active, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onTap,
+    child: AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color:  active ? kAccent : Colors.transparent,
+        borderRadius: BorderRadius.circular(7),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: active ? Colors.white : kTextSub,
+        ),
+      ),
+    ),
+  );
 }

@@ -1,3 +1,4 @@
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/notification.dart';
 import 'auth_service.dart';
@@ -29,6 +30,8 @@ class NotificationChecker {
           _checkTachesEnRetard(id, titre, statut),
           _checkFacturesEnRetard(id, titre),
           _checkDeadlineProjet(titre, p['date_fin'] as String?, statut),
+          _checkCommentairesClient(id, titre),
+          _checkBudgetProjetDepasse(id, titre),
         ]);
       }
     } catch (_) {}
@@ -67,7 +70,10 @@ class NotificationChecker {
           .from('membre_taches')
           .select('tache_id')
           .eq('projet_id', projetId);
-      final assigned = (assignedRows as List).map((r) => r['tache_id'] as String).toSet();
+      final assigned = (assignedRows as List)
+          .map((r) => r['tache_id']?.toString() ?? '')
+          .where((id) => id.isNotEmpty)
+          .toSet();
 
       for (final t in taches as List) {
         final tacheId    = t['id']    as String? ?? '';
@@ -139,6 +145,93 @@ class NotificationChecker {
           message: 'Délai du projet bientôt atteint (moins de 7 jours)',
           projet: titre,
           type: NotifType.retard,
+        );
+      }
+    } catch (_) {}
+  }
+
+  // ── 6. Commentaires client non lus et sans réponse ───────────────────────
+  static Future<void> _checkCommentairesClient(String projetId, String titre) async {
+    try {
+      // Dernière visite de l'architecte sur l'onglet commentaires de ce projet
+      final prefs    = await SharedPreferences.getInstance();
+      final lastSeen = prefs.getString('comments_last_seen_$projetId');
+
+      // Timestamp de la dernière réponse de l'architecte
+      final archRows = await _db
+          .from('commentaires')
+          .select('created_at')
+          .eq('projet_id', projetId)
+          .eq('role', 'architecte')
+          .order('created_at', ascending: false)
+          .limit(1);
+      final lastReply = (archRows as List).isNotEmpty
+          ? archRows.first['created_at'] as String? ?? ''
+          : '';
+
+      // Commentaires client des 7 derniers jours
+      final since = DateTime.now().subtract(const Duration(days: 7)).toUtc().toIso8601String();
+      final rows = await _db
+          .from('commentaires')
+          .select('id, auteur, contenu, created_at')
+          .eq('projet_id', projetId)
+          .eq('role', 'client')
+          .gte('created_at', since)
+          .order('created_at', ascending: true);
+
+      for (final c in rows as List) {
+        final commentId = c['id']?.toString() ?? '';
+        final auteur    = c['auteur']     as String? ?? 'Client';
+        final contenu   = c['contenu']    as String? ?? '';
+        final createdAt = c['created_at'] as String? ?? '';
+        if (contenu.isEmpty || commentId.isEmpty) continue;
+
+        // Non lu : créé après la dernière visite de l'architecte (ou jamais visité)
+        final nonLu = lastSeen == null || createdAt.compareTo(lastSeen) > 0;
+
+        // Non répondu : aucune réponse architecte après ce commentaire
+        final nonRepondu = lastReply.isEmpty || createdAt.compareTo(lastReply) > 0;
+
+        if (!nonLu || !nonRepondu) continue;
+
+        final dateLabel = _formatDate(createdAt);
+        final preview   = contenu.length > 60 ? '${contenu.substring(0, 60)}…' : contenu;
+
+        await NotificationService.add(
+          message: '$auteur ($dateLabel) : $preview',
+          projet: titre,
+          type: NotifType.commentaire,
+        );
+      }
+    } catch (_) {}
+  }
+
+  static String _formatDate(String iso) {
+    try {
+      final dt = DateTime.parse(iso).toLocal();
+      final d  = dt.day.toString().padLeft(2, '0');
+      final mo = dt.month.toString().padLeft(2, '0');
+      final h  = dt.hour.toString().padLeft(2, '0');
+      final mi = dt.minute.toString().padLeft(2, '0');
+      return '$d/$mo à $h:$mi';
+    } catch (_) { return ''; }
+  }
+
+  // ── 7. Budget total du projet dépassé ─────────────────────────────────────
+  static Future<void> _checkBudgetProjetDepasse(String projetId, String titre) async {
+    try {
+      final result = await _db
+          .from('projets')
+          .select('budget_total, budget_depense')
+          .eq('id', projetId)
+          .single();
+      final total   = (result['budget_total']   as num?)?.toDouble() ?? 0;
+      final depense = (result['budget_depense'] as num?)?.toDouble() ?? 0;
+      if (total > 0 && depense > total) {
+        await NotificationService.add(
+          message: 'Budget du projet dépassé : ${depense.toStringAsFixed(0)} DT dépensés sur ${total.toStringAsFixed(0)} DT prévus',
+          projet: titre,
+          type: NotifType.budget,
         );
       }
     } catch (_) {}

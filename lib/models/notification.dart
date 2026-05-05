@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../service/notification_service.dart';
 
-enum NotifType { budget, retard, document, info, ia }
+enum NotifType { budget, retard, document, info, ia, commentaire }
 
 class AppNotification {
   final String id;
@@ -38,31 +38,34 @@ class AppNotification {
 
   Color get typeColor {
     switch (type) {
-      case NotifType.budget:   return const Color(0xFFEF4444);
-      case NotifType.retard:   return const Color(0xFFF59E0B);
-      case NotifType.document: return const Color(0xFF3B82F6);
-      case NotifType.ia:       return const Color(0xFF8B5CF6);
-      default:                 return const Color(0xFF6B7280);
+      case NotifType.budget:       return const Color(0xFFEF4444);
+      case NotifType.retard:       return const Color(0xFFF59E0B);
+      case NotifType.document:     return const Color(0xFF3B82F6);
+      case NotifType.ia:           return const Color(0xFF8B5CF6);
+      case NotifType.commentaire:  return const Color(0xFF10B981);
+      default:                     return const Color(0xFF6B7280);
     }
   }
 
   IconData get typeIcon {
     switch (type) {
-      case NotifType.budget:   return LucideIcons.alertTriangle;
-      case NotifType.retard:   return LucideIcons.clock;
-      case NotifType.document: return LucideIcons.fileText;
-      case NotifType.ia:       return LucideIcons.sparkles;
-      default:                 return LucideIcons.bell;
+      case NotifType.budget:       return LucideIcons.alertTriangle;
+      case NotifType.retard:       return LucideIcons.clock;
+      case NotifType.document:     return LucideIcons.fileText;
+      case NotifType.ia:           return LucideIcons.sparkles;
+      case NotifType.commentaire:  return LucideIcons.messageCircle;
+      default:                     return LucideIcons.bell;
     }
   }
 
   String get typeLabel {
     switch (type) {
-      case NotifType.budget:   return 'Alerte budget';
-      case NotifType.retard:   return 'Retard';
-      case NotifType.document: return 'Document';
-      case NotifType.ia:       return '✨ Analyse IA';
-      default:                 return 'Info';
+      case NotifType.budget:       return 'Alerte budget';
+      case NotifType.retard:       return 'Retard';
+      case NotifType.document:     return 'Document';
+      case NotifType.ia:           return '✨ Analyse IA';
+      case NotifType.commentaire:  return 'Commentaire client';
+      default:                     return 'Info';
     }
   }
 }
