@@ -689,9 +689,11 @@ class _GanttCard extends StatelessWidget {
               onPressed: () => Navigator.of(dctx).pop(),
             ),
           ),
-          body: Padding(
+          body: SingleChildScrollView(
             padding: const EdgeInsets.all(16),
-            child: _GanttContent(projects: projects, expanded: true),
+            child: IntrinsicHeight(
+              child: _GanttContent(projects: projects, expanded: true),
+            ),
           ),
         ),
       ),

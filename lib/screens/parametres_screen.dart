@@ -27,15 +27,6 @@ class _ParametresScreenState extends State<ParametresScreen> {
   bool _showConfirm = false;
   bool _savingMdp   = false;
 
-  // ── Notifications ──────────────────────────────────────────────────────────
-  bool _emailNotif    = true;
-  bool _pushNotif     = true;
-  bool _majProjets    = true;
-  bool _commentaires  = true;
-  bool _tachesDemain  = true;
-  bool _congesEquipe  = true;
-  bool _reunions      = true;
-
   // ── État ───────────────────────────────────────────────────────────────────
   bool _hasChanges = false;
   bool _saving     = false;
@@ -247,46 +238,22 @@ class _ParametresScreenState extends State<ParametresScreen> {
                     );
 
                     final mdpCard = _MdpCard(
-                      ancienCtrl:    _ancienMdpCtrl,
-                      nouveauCtrl:   _nouveauMdpCtrl,
-                      confirmCtrl:   _confirmMdpCtrl,
-                      showAncien:    _showAncien,
-                      showNouveau:   _showNouveau,
-                      showConfirm:   _showConfirm,
-                      saving:        _savingMdp,
+                      ancienCtrl:      _ancienMdpCtrl,
+                      nouveauCtrl:     _nouveauMdpCtrl,
+                      confirmCtrl:     _confirmMdpCtrl,
+                      showAncien:      _showAncien,
+                      showNouveau:     _showNouveau,
+                      showConfirm:     _showConfirm,
+                      saving:          _savingMdp,
                       onToggleAncien:  () => setState(() => _showAncien  = !_showAncien),
                       onToggleNouveau: () => setState(() => _showNouveau = !_showNouveau),
                       onToggleConfirm: () => setState(() => _showConfirm = !_showConfirm),
                       onSave: _changePassword,
                     );
 
-                    final notifCard = _NotifCard(
-                      emailNotif:   _emailNotif,
-                      pushNotif:    _pushNotif,
-                      majProjets:   _majProjets,
-                      commentaires: _commentaires,
-                      tachesDemain: _tachesDemain,
-                      congesEquipe: _congesEquipe,
-                      reunions:     _reunions,
-                      onEmailChanged:   (v) => setState(() => _emailNotif   = v),
-                      onPushChanged:    (v) => setState(() => _pushNotif    = v),
-                      onMajChanged:     (v) => setState(() => _majProjets   = v),
-                      onCommChanged:    (v) => setState(() => _commentaires = v),
-                      onTachesChanged:  (v) => setState(() => _tachesDemain = v),
-                      onCongesChanged:  (v) => setState(() => _congesEquipe = v),
-                      onReunionsChanged:(v) => setState(() => _reunions     = v),
-                    );
-
                     if (wide) {
                       return Column(children: [
-                        IntrinsicHeight(child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(child: profilCard),
-                            const SizedBox(width: 20),
-                            Expanded(child: notifCard),
-                          ],
-                        )),
+                        profilCard,
                         const SizedBox(height: 20),
                         mdpCard,
                       ]);
@@ -296,8 +263,6 @@ class _ParametresScreenState extends State<ParametresScreen> {
                       profilCard,
                       const SizedBox(height: 16),
                       mdpCard,
-                      const SizedBox(height: 16),
-                      notifCard,
                     ]);
                   }),
                 ],
@@ -493,9 +458,9 @@ class _MdpCard extends StatelessWidget {
 
           isMobile
               ? Column(children: [
-                  _PwdField(label: 'Mot de passe actuel',     ctrl: ancienCtrl,  show: showAncien,  onToggle: onToggleAncien),
+                  _PwdField(label: 'Mot de passe actuel',       ctrl: ancienCtrl,  show: showAncien,  onToggle: onToggleAncien),
                   const SizedBox(height: 14),
-                  _PwdField(label: 'Nouveau mot de passe',    ctrl: nouveauCtrl, show: showNouveau, onToggle: onToggleNouveau),
+                  _PwdField(label: 'Nouveau mot de passe',      ctrl: nouveauCtrl, show: showNouveau, onToggle: onToggleNouveau),
                   const SizedBox(height: 14),
                   _PwdField(label: 'Confirmer le mot de passe', ctrl: confirmCtrl, show: showConfirm, onToggle: onToggleConfirm),
                 ])
@@ -523,64 +488,6 @@ class _MdpCard extends StatelessWidget {
               ),
             ),
           ),
-        ],
-      ),
-    );
-  }
-}
-
-// ─── Notifications Card ───────────────────────────────────────────────────────
-class _NotifCard extends StatelessWidget {
-  final bool emailNotif, pushNotif, majProjets, commentaires, tachesDemain, congesEquipe, reunions;
-  final ValueChanged<bool> onEmailChanged, onPushChanged, onMajChanged, onCommChanged,
-      onTachesChanged, onCongesChanged, onReunionsChanged;
-
-  const _NotifCard({
-    required this.emailNotif,
-    required this.pushNotif,
-    required this.majProjets,
-    required this.commentaires,
-    required this.tachesDemain,
-    required this.congesEquipe,
-    required this.reunions,
-    required this.onEmailChanged,
-    required this.onPushChanged,
-    required this.onMajChanged,
-    required this.onCommChanged,
-    required this.onTachesChanged,
-    required this.onCongesChanged,
-    required this.onReunionsChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return _Card(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(children: [
-            Icon(LucideIcons.bell, color: kTextSub, size: 18),
-            SizedBox(width: 10),
-            Text('Contrôle des notifications', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: kTextMain)),
-          ]),
-          const SizedBox(height: 4),
-          const Text('Gérez comment et pourquoi vous souhaitez être alerté.', style: TextStyle(color: kTextSub, fontSize: 12)),
-          const SizedBox(height: 20),
-
-          _SectionLabel(label: "CANAUX D'ENVOI"),
-          const SizedBox(height: 10),
-          _ToggleCard(icon: LucideIcons.mail,       iconColor: kAccent, title: 'Notifications par Email',        subtitle: 'Récapitulatif et alertes importantes sur votre boîte mail.',         value: emailNotif, onChanged: onEmailChanged),
-          const SizedBox(height: 10),
-          _ToggleCard(icon: LucideIcons.smartphone, iconColor: kAccent, title: 'Notifications Push / In-App',    subtitle: 'Alertes instantanées sur votre tableau de bord et mobile.',          value: pushNotif,  onChanged: onPushChanged),
-          const SizedBox(height: 20),
-
-          _SectionLabel(label: "TYPES D'ALERTES"),
-          const SizedBox(height: 10),
-          _ToggleRow(icon: LucideIcons.refreshCw,      label: 'Mises à jour des projets',                value: majProjets,   onChanged: onMajChanged),
-          _ToggleRow(icon: LucideIcons.messageSquare,  label: 'Commentaires des clients (avancement)',   value: commentaires,  onChanged: onCommChanged),
-          _ToggleRow(icon: LucideIcons.calendarCheck,  label: 'Tâches qui commencent demain',            value: tachesDemain,  onChanged: onTachesChanged),
-          _ToggleRow(icon: LucideIcons.umbrella,       label: "Rappels pour les congés d'équipe",        value: congesEquipe,  onChanged: onCongesChanged),
-          _ToggleRow(icon: LucideIcons.calendarClock,  label: 'Rappels de tâches et réunions',           value: reunions,      onChanged: onReunionsChanged, isLast: true),
         ],
       ),
     );
@@ -683,78 +590,4 @@ class _PwdField extends StatelessWidget {
       ),
     ],
   );
-}
-
-class _SectionLabel extends StatelessWidget {
-  final String label;
-  const _SectionLabel({required this.label});
-
-  @override
-  Widget build(BuildContext context) => Text(
-    label,
-    style: const TextStyle(color: kTextSub, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.8),
-  );
-}
-
-class _ToggleCard extends StatelessWidget {
-  final IconData icon;
-  final Color iconColor;
-  final String title;
-  final String subtitle;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  const _ToggleCard({
-    required this.icon, required this.iconColor,
-    required this.title, required this.subtitle,
-    required this.value, required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(14),
-    decoration: BoxDecoration(
-      color: const Color(0xFFF9FAFB),
-      borderRadius: BorderRadius.circular(10),
-      border: Border.all(color: const Color(0xFFE5E7EB)),
-    ),
-    child: Row(children: [
-      Icon(icon, color: iconColor, size: 18),
-      const SizedBox(width: 12),
-      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(title,    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: kTextMain)),
-        const SizedBox(height: 2),
-        Text(subtitle, style: const TextStyle(color: kTextSub, fontSize: 11)),
-      ])),
-      Switch(value: value, onChanged: onChanged, activeColor: kAccent),
-    ]),
-  );
-}
-
-class _ToggleRow extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-  final bool isLast;
-
-  const _ToggleRow({
-    required this.icon, required this.label,
-    required this.value, required this.onChanged,
-    this.isLast = false,
-  });
-
-  @override
-  Widget build(BuildContext context) => Column(children: [
-    Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10),
-      child: Row(children: [
-        Icon(icon, size: 16, color: kTextSub),
-        const SizedBox(width: 10),
-        Expanded(child: Text(label, style: const TextStyle(color: kTextMain, fontSize: 13))),
-        Switch(value: value, onChanged: onChanged, activeColor: kAccent, materialTapTargetSize: MaterialTapTargetSize.shrinkWrap),
-      ]),
-    ),
-    if (!isLast) const Divider(height: 1, color: Color(0xFFF3F4F6)),
-  ]);
 }

@@ -62,8 +62,8 @@ class CarteScreen extends StatefulWidget {
 class _CarteScreenState extends State<CarteScreen> {
   final MapController _mapController = MapController();
 
-  List<Project>     _projects  = [];
-  List<_ChantierGeo> _geocoded = [];
+  List<Project>      _projects  = [];
+  List<_ChantierGeo> _geocoded  = [];
   bool   _loading          = true;
   int?   _selectedIndex;
   LatLng? _myPosition;
@@ -81,13 +81,10 @@ class _CarteScreenState extends State<CarteScreen> {
     setState(() { _loading = true; _selectedIndex = null; });
     try {
       final projects = await ProjetService.getProjets();
-      // Coordonnées stockées en priorité, géocodage en fallback
       final futures = projects.map((p) async {
-        // 1. Coordonnées exactes enregistrées
         if (p.hasPosition) {
           return _ChantierGeo(project: p, position: LatLng(p.latitude!, p.longitude!));
         }
-        // 2. Géocodage du champ localisation
         if (p.localisation.isEmpty) return null;
         final pos = await _geocode(p.localisation);
         if (pos == null) return null;
@@ -102,7 +99,6 @@ class _CarteScreenState extends State<CarteScreen> {
         _loading  = false;
       });
 
-      // Centrer la carte sur le barycentre des projets géocodés
       if (geocoded.isNotEmpty) {
         final avgLat = geocoded.map((c) => c.position.latitude).reduce((a, b) => a + b) / geocoded.length;
         final avgLng = geocoded.map((c) => c.position.longitude).reduce((a, b) => a + b) / geocoded.length;
@@ -113,45 +109,48 @@ class _CarteScreenState extends State<CarteScreen> {
     }
   }
 
+  // ── Ma position — mobile uniquement ────────────────────────────────────────
   Future<void> _goToMyPosition() async {
     setState(() => _loadingPosition = true);
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) throw Exception('Service désactivé');
+      if (!serviceEnabled) throw Exception('Service de localisation désactivé');
       LocationPermission perm = await Geolocator.checkPermission();
       if (perm == LocationPermission.denied) perm = await Geolocator.requestPermission();
-      if (perm == LocationPermission.deniedForever) throw Exception('Permission refusée');
+      if (perm == LocationPermission.deniedForever) throw Exception('Permission refusée définitivement');
       final pos = await Geolocator.getCurrentPosition();
       final ll = LatLng(pos.latitude, pos.longitude);
       setState(() => _myPosition = ll);
       _mapController.move(ll, 13);
     } catch (e) {
-      if (mounted) showDialog(
-        context: context,
-        builder: (dctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          content: Row(children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(color: kRed.withOpacity(0.12), shape: BoxShape.circle),
-              child: const Icon(Icons.error_outline_rounded, color: kRed, size: 24),
-            ),
-            const SizedBox(width: 12),
-            Flexible(child: Text('Position indisponible : $e', style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14))),
-          ]),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dctx),
-              child: const Text('OK', style: TextStyle(color: kRed, fontWeight: FontWeight.w600)),
-            ),
-          ],
-        ),
-      );
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (dctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            content: Row(children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(color: kRed.withOpacity(0.12), shape: BoxShape.circle),
+                child: const Icon(Icons.error_outline_rounded, color: kRed, size: 24),
+              ),
+              const SizedBox(width: 12),
+              Flexible(child: Text('Position indisponible : $e',
+                  style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14))),
+            ]),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dctx),
+                child: const Text('OK', style: TextStyle(color: kRed, fontWeight: FontWeight.w600)),
+              ),
+            ],
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _loadingPosition = false);
     }
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -177,18 +176,30 @@ class _CarteScreenState extends State<CarteScreen> {
           // ── Header ────────────────────────────────────────────────────────
           Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('Carte des chantiers', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: kTextMain)),
+              const Text('Carte des chantiers',
+                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: kTextMain)),
               const SizedBox(height: 4),
-              Text('${_projects.length} projet${_projects.length > 1 ? "s" : ""} · ${_geocoded.length} localisé${_geocoded.length > 1 ? "s" : ""}',
-                  style: const TextStyle(color: kTextSub, fontSize: 13)),
+              Text(
+                '${_projects.length} projet${_projects.length > 1 ? "s" : ""} · '
+                '${_geocoded.length} localisé${_geocoded.length > 1 ? "s" : ""}',
+                style: const TextStyle(color: kTextSub, fontSize: 13),
+              ),
             ])),
-            IconButton(onPressed: _load, tooltip: 'Actualiser', icon: const Icon(LucideIcons.refreshCw, size: 18, color: kTextSub)),
+            IconButton(
+              onPressed: _load,
+              tooltip: 'Actualiser',
+              icon: const Icon(LucideIcons.refreshCw, size: 18, color: kTextSub),
+            ),
+            // Bouton "Ma position" visible uniquement sur mobile dans le header
             if (isMobile) ...[
               const SizedBox(width: 8),
               OutlinedButton.icon(
                 onPressed: _loadingPosition ? null : _goToMyPosition,
                 icon: _loadingPosition
-                    ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: kTextSub))
+                    ? const SizedBox(
+                        width: 14, height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: kTextSub),
+                      )
                     : const Icon(LucideIcons.navigation, size: 14, color: kTextSub),
                 label: const Text('Ma position', style: TextStyle(color: kTextSub, fontSize: 12)),
                 style: OutlinedButton.styleFrom(
@@ -229,16 +240,19 @@ class _CarteScreenState extends State<CarteScreen> {
               const Row(children: [
                 Icon(LucideIcons.mapPin, color: kAccent, size: 16),
                 SizedBox(width: 8),
-                Text('Légende & Informations', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: kTextMain)),
+                Text('Légende & Informations',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: kTextMain)),
               ]),
               const SizedBox(height: 12),
-              Wrap(spacing: 20, runSpacing: 8, children: [
-                _LegendeDot(color: kAccent,                       label: 'En cours'),
-                _LegendeDot(color: const Color(0xFF10B981),       label: 'Terminé'),
-                _LegendeDot(color: kRed,                          label: 'Annulé'),
-                _LegendeDot(color: const Color(0xFFD1D5DB),       label: 'Planification'),
-                _LegendeDot(color: Colors.blue,                   label: 'Votre position'),
-              ]),
+             // APRÈS
+Wrap(spacing: 20, runSpacing: 8, children: [
+  _LegendeDot(color: kAccent,                       label: 'En cours'),
+  _LegendeDot(color: const Color(0xFF10B981),       label: 'Terminé'),
+  _LegendeDot(color: kRed,                          label: 'Annulé'),
+  _LegendeDot(color: const Color(0xFFD1D5DB),       label: 'Planification'),
+  if (isMobile)
+    _LegendeDot(color: Colors.blue,                 label: 'Votre position'),
+]),
             ]),
           ),
 
@@ -258,22 +272,11 @@ class _CarteScreenState extends State<CarteScreen> {
                 child: Row(children: [
                   const Icon(LucideIcons.mapPin, color: kAccent, size: 15),
                   const SizedBox(width: 8),
-                  Text('Carte interactive – ${geo.length} marqueur${geo.length > 1 ? "s" : ""}',
-                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: kTextMain)),
-                  const Spacer(),
-                  if (!isMobile)
-                    OutlinedButton.icon(
-                      onPressed: _loadingPosition ? null : _goToMyPosition,
-                      icon: _loadingPosition
-                          ? const SizedBox(width: 13, height: 13, child: CircularProgressIndicator(strokeWidth: 2, color: kTextSub))
-                          : const Icon(LucideIcons.navigation, size: 13, color: kTextSub),
-                      label: const Text('Ma position', style: TextStyle(color: kTextSub, fontSize: 12)),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        side: const BorderSide(color: Color(0xFFD1D5DB)),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      ),
-                    ),
+                  Text(
+                    'Carte interactive – ${geo.length} marqueur${geo.length > 1 ? "s" : ""}',
+                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: kTextMain),
+                  ),
+                  // Sur desktop : aucun bouton "Ma position" ici
                 ]),
               ),
 
@@ -299,7 +302,7 @@ class _CarteScreenState extends State<CarteScreen> {
                         userAgentPackageName: 'com.archi.manager',
                       ),
                       MarkerLayer(markers: [
-                        // Ma position
+                        // Ma position (uniquement si définie via mobile)
                         if (_myPosition != null)
                           Marker(
                             point: _myPosition!,
@@ -326,9 +329,14 @@ class _CarteScreenState extends State<CarteScreen> {
                             height: isSelected ? 80  : 36,
                             alignment: Alignment.topCenter,
                             child: GestureDetector(
-                              onTap: () => setState(() => _selectedIndex = _selectedIndex == i ? null : i),
+                              onTap: () => setState(() =>
+                                  _selectedIndex = _selectedIndex == i ? null : i),
                               child: isSelected
-                                  ? _MarkerPopup(chantier: c, color: color, onClose: () => setState(() => _selectedIndex = null))
+                                  ? _MarkerPopup(
+                                      chantier: c,
+                                      color: color,
+                                      onClose: () => setState(() => _selectedIndex = null),
+                                    )
                                   : _MarkerPin(color: color),
                             ),
                           );
@@ -344,7 +352,8 @@ class _CarteScreenState extends State<CarteScreen> {
           const SizedBox(height: 24),
 
           // ── Titre liste ───────────────────────────────────────────────────
-          Text('Projets (${projs.length})', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: kTextMain)),
+          Text('Projets (${projs.length})',
+              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: kTextMain)),
 
           const SizedBox(height: 14),
 
@@ -363,7 +372,10 @@ class _CarteScreenState extends State<CarteScreen> {
               final cols = constraints.maxWidth > 700 ? 3 : 1;
               if (cols == 1) {
                 return Column(children: projs.map((p) {
-                  final geo = _geocoded.firstWhere((c) => c.project.id == p.id, orElse: () => _ChantierGeo(project: p, position: _defaultCenter));
+                  final geoObj = _geocoded.firstWhere(
+                    (c) => c.project.id == p.id,
+                    orElse: () => _ChantierGeo(project: p, position: _defaultCenter),
+                  );
                   final hasGeo = _geocoded.any((c) => c.project.id == p.id);
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 12),
@@ -371,8 +383,9 @@ class _CarteScreenState extends State<CarteScreen> {
                       project: p,
                       hasGeo: hasGeo,
                       onTap: hasGeo ? () {
-                        _mapController.move(geo.position, 14);
-                        setState(() => _selectedIndex = _geocoded.indexWhere((c) => c.project.id == p.id));
+                        _mapController.move(geoObj.position, 14);
+                        setState(() => _selectedIndex =
+                            _geocoded.indexWhere((c) => c.project.id == p.id));
                       } : null,
                     ),
                   );
@@ -385,23 +398,30 @@ class _CarteScreenState extends State<CarteScreen> {
                 final chunk = projs.sublist(i, (i + 3).clamp(0, projs.length));
                 rows.add(Padding(
                   padding: const EdgeInsets.only(bottom: 16),
-                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: chunk.asMap().entries.map((e) {
-                    final p      = e.value;
-                    final idx    = e.key;
-                    final geoObj = _geocoded.firstWhere((c) => c.project.id == p.id, orElse: () => _ChantierGeo(project: p, position: _defaultCenter));
-                    final hasGeo = _geocoded.any((c) => c.project.id == p.id);
-                    return Expanded(child: Padding(
-                      padding: EdgeInsets.only(left: idx == 0 ? 0 : 16),
-                      child: _ProjetCarteCard(
-                        project: p,
-                        hasGeo: hasGeo,
-                        onTap: hasGeo ? () {
-                          _mapController.move(geoObj.position, 14);
-                          setState(() => _selectedIndex = _geocoded.indexWhere((c) => c.project.id == p.id));
-                        } : null,
-                      ),
-                    ));
-                  }).toList()),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: chunk.asMap().entries.map((e) {
+                      final p      = e.value;
+                      final idx    = e.key;
+                      final geoObj = _geocoded.firstWhere(
+                        (c) => c.project.id == p.id,
+                        orElse: () => _ChantierGeo(project: p, position: _defaultCenter),
+                      );
+                      final hasGeo = _geocoded.any((c) => c.project.id == p.id);
+                      return Expanded(child: Padding(
+                        padding: EdgeInsets.only(left: idx == 0 ? 0 : 16),
+                        child: _ProjetCarteCard(
+                          project: p,
+                          hasGeo: hasGeo,
+                          onTap: hasGeo ? () {
+                            _mapController.move(geoObj.position, 14);
+                            setState(() => _selectedIndex =
+                                _geocoded.indexWhere((c) => c.project.id == p.id));
+                          } : null,
+                        ),
+                      ));
+                    }).toList(),
+                  ),
                 ));
               }
               return Column(children: rows);
@@ -418,17 +438,28 @@ class _StatBadge extends StatelessWidget {
   final int count;
   final Color color;
   final Color textColor;
-  const _StatBadge({required this.label, required this.count, required this.color, this.textColor = Colors.white});
+  const _StatBadge({
+    required this.label,
+    required this.count,
+    required this.color,
+    this.textColor = Colors.white,
+  });
 
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-    decoration: BoxDecoration(color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.3))),
+    decoration: BoxDecoration(
+      color: color.withOpacity(0.12),
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: color.withOpacity(0.3)),
+    ),
     child: Row(mainAxisSize: MainAxisSize.min, children: [
       Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
       const SizedBox(width: 6),
-      Text('$count $label', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color == const Color(0xFFD1D5DB) ? kTextSub : color)),
+      Text('$count $label', style: TextStyle(
+        fontSize: 12, fontWeight: FontWeight.w600,
+        color: color == const Color(0xFFD1D5DB) ? kTextSub : color,
+      )),
     ]),
   );
 }
@@ -436,6 +467,7 @@ class _StatBadge extends StatelessWidget {
 class _MarkerPin extends StatelessWidget {
   final Color color;
   const _MarkerPin({required this.color});
+
   @override
   Widget build(BuildContext context) => Column(mainAxisSize: MainAxisSize.min, children: [
     Container(
@@ -468,20 +500,26 @@ class _MarkerPopup extends StatelessWidget {
         border: Border.all(color: color, width: 2),
         boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.15), blurRadius: 10, offset: const Offset(0, 4))],
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-        Row(children: [
-          Expanded(child: Text(p.titre, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: kTextMain), overflow: TextOverflow.ellipsis)),
-          GestureDetector(onTap: onClose, child: const Icon(Icons.close_rounded, size: 12, color: kTextSub)),
-        ]),
-        const SizedBox(height: 4),
-        Text(p.localisation, style: const TextStyle(fontSize: 9, color: kTextSub)),
-        const SizedBox(height: 4),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-          decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(10)),
-          child: Text(p.status, style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w600)),
-        ),
-      ]),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(children: [
+            Expanded(child: Text(p.titre,
+                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: kTextMain),
+                overflow: TextOverflow.ellipsis)),
+            GestureDetector(onTap: onClose, child: const Icon(Icons.close_rounded, size: 12, color: kTextSub)),
+          ]),
+          const SizedBox(height: 4),
+          Text(p.localisation, style: const TextStyle(fontSize: 9, color: kTextSub)),
+          const SizedBox(height: 4),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(10)),
+            child: Text(p.status, style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -505,9 +543,9 @@ class _ProjetCarteCard extends StatelessWidget {
         boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Titre + statut
         Row(children: [
-          Expanded(child: Text(p.titre, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: kTextMain))),
+          Expanded(child: Text(p.titre,
+              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: kTextMain))),
           const SizedBox(width: 8),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -517,17 +555,16 @@ class _ProjetCarteCard extends StatelessWidget {
         ]),
         const SizedBox(height: 10),
 
-        // Client
         if (p.client.isNotEmpty) ...[
           Row(children: [
             const Icon(LucideIcons.briefcase, size: 13, color: kTextSub),
             const SizedBox(width: 6),
-            Expanded(child: Text(p.client, style: const TextStyle(color: kTextSub, fontSize: 12), overflow: TextOverflow.ellipsis)),
+            Expanded(child: Text(p.client,
+                style: const TextStyle(color: kTextSub, fontSize: 12), overflow: TextOverflow.ellipsis)),
           ]),
           const SizedBox(height: 4),
         ],
 
-        // Localisation
         Row(children: [
           Icon(Icons.location_on_rounded, size: 13, color: hasGeo ? color : kTextSub),
           const SizedBox(width: 6),
@@ -543,7 +580,6 @@ class _ProjetCarteCard extends StatelessWidget {
             ),
         ]),
 
-        // Chef
         if (p.chef.isNotEmpty) ...[
           const SizedBox(height: 4),
           Row(children: [
@@ -555,7 +591,6 @@ class _ProjetCarteCard extends StatelessWidget {
 
         const SizedBox(height: 14),
 
-        // Bouton
         SizedBox(
           width: double.infinity,
           child: ElevatedButton.icon(
@@ -582,6 +617,7 @@ class _LegendeDot extends StatelessWidget {
   final Color color;
   final String label;
   const _LegendeDot({required this.color, required this.label});
+
   @override
   Widget build(BuildContext context) => Row(mainAxisSize: MainAxisSize.min, children: [
     Container(width: 14, height: 14, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
