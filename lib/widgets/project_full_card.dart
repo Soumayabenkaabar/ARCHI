@@ -5,8 +5,9 @@ import '../models/project.dart';
 
 class ProjectFullCard extends StatelessWidget {
   final Project project;
+  final VoidCallback? onDelete;
 
-  const ProjectFullCard({super.key, required this.project});
+  const ProjectFullCard({super.key, required this.project, this.onDelete});
 
   String _formatDt(double amount) {
     if (amount == 0) return '0 DT';
@@ -58,7 +59,7 @@ class ProjectFullCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Title + status badge
+                // Title + status badge + delete
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -76,26 +77,49 @@ class ProjectFullCard extends StatelessWidget {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        // Status badge
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: _statusColor,
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            project.status,
-                            style: TextStyle(
-                              color: project.status == 'Planification'
-                                  ? Colors.white
-                                  : Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            // Status badge
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: _statusColor,
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Text(
+                                project.status,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
                             ),
-                          ),
+                            if (onDelete != null) ...[
+                              const SizedBox(width: 6),
+                              GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTap: onDelete,
+                                child: Container(
+                                  padding: const EdgeInsets.all(5),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFFFEBEB),
+                                    borderRadius: BorderRadius.circular(7),
+                                  ),
+                                  child: const Icon(
+                                    LucideIcons.trash2,
+                                    size: 13,
+                                    color: Color(0xFFEF4444),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                         const SizedBox(height: 6),
                         // Accès client badge
@@ -217,16 +241,22 @@ class ProjectFullCard extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
             child: Row(
               children: [
+                const Icon(LucideIcons.checkSquare, size: 13, color: kTextSub),
+                const SizedBox(width: 4),
                 Text(
                   '${project.taches} tâches',
                   style: const TextStyle(color: kTextSub, fontSize: 12),
                 ),
                 const _Dot(),
+                const Icon(LucideIcons.users, size: 13, color: kTextSub),
+                const SizedBox(width: 4),
                 Text(
                   '${project.membres.length} membres',
                   style: const TextStyle(color: kTextSub, fontSize: 12),
                 ),
                 const _Dot(),
+                const Icon(LucideIcons.fileText, size: 13, color: kTextSub),
+                const SizedBox(width: 4),
                 Text(
                   '${project.docs.length} docs',
                   style: const TextStyle(color: kTextSub, fontSize: 12),

@@ -32,6 +32,20 @@ class AuthService {
     }
   }
 
+  // ── Vérification email existant ───────────────────────────────────────────
+  static Future<bool> checkEmailExists(String email) async {
+    try {
+      final result = await _sb
+          .from('architectes')
+          .select('id')
+          .eq('email', email.trim().toLowerCase())
+          .limit(1);
+      return (result as List).isNotEmpty;
+    } catch (_) {
+      return false; // En cas d'erreur réseau, on laisse Supabase Auth gérer
+    }
+  }
+
   // ── Inscription ───────────────────────────────────────────────────────────
   static Future<AuthResult> register({
     required String nom,
@@ -58,8 +72,6 @@ class AuthService {
         return AuthResult.failure('Inscription échouée. Réessayez.');
       }
 
-      // Le trigger Supabase insère automatiquement dans architectes.
-      // On construit l'objet local directement sans requête supplémentaire.
       _currentUser = Architecte(
         id: res.user!.id,
         nom: nom.trim(),
@@ -71,8 +83,15 @@ class AuthService {
       );
 
       await _saveProfileLocally(_currentUser!);
-      return AuthResult.success(_currentUser!);
+
+      // Force email verification: always sign out and require confirmation
+      await _sb.auth.signOut();
+      return AuthResult.pendingVerification(_currentUser!);
     } on AuthException catch (e) {
+      if (e.message.contains('User already registered') ||
+          e.message.contains('already been registered')) {
+        return AuthResult.emailConflict();
+      }
       return AuthResult.failure(_translateError(e.message));
     } catch (e) {
       return AuthResult.failure('Erreur inattendue : $e');
@@ -93,6 +112,13 @@ class AuthService {
       if (res.user == null) {
         return AuthResult.failure(
           'Connexion échouée. Vérifiez vos identifiants.',
+        );
+      }
+
+      if (res.user!.emailConfirmedAt == null) {
+        await _sb.auth.signOut();
+        return AuthResult.failure(
+          'Veuillez confirmer votre email avant de vous connecter.',
         );
       }
 
@@ -215,11 +241,27 @@ class AuthResult {
   final bool success;
   final Architecte? architecte;
   final String? error;
+  final bool emailVerificationRequired;
+  final bool isEmailConflict;
 
-  const AuthResult._({required this.success, this.architecte, this.error});
+  const AuthResult._({
+    required this.success,
+    this.architecte,
+    this.error,
+    this.emailVerificationRequired = false,
+    this.isEmailConflict = false,
+  });
 
   factory AuthResult.success(Architecte a) =>
       AuthResult._(success: true, architecte: a);
+
+  factory AuthResult.pendingVerification(Architecte a) =>
+      AuthResult._(success: true, architecte: a, emailVerificationRequired: true);
+
+  factory AuthResult.emailConflict() =>
+      AuthResult._(success: false, isEmailConflict: true,
+          error: 'Cet email est déjà lié à un compte Supabase.');
+
   factory AuthResult.failure(String msg) =>
       AuthResult._(success: false, error: msg);
 }

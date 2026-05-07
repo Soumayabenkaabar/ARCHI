@@ -5,7 +5,12 @@
       "Bash(flutter analyze:*)",
       "Bash(xargs grep *)",
       "Bash(flutter pub *)",
-      "Bash(grep -E \"\\\\.dart$\")"
+      "Bash(grep -E \"\\\\.dart$\")",
+      "Bash(Get-ChildItem -Path \"D:\\\\0000\\\\archu\\\\FRONT-END-main\" -Force)",
+      "Bash(Select-Object Name, FullName)",
+      "Bash(dart pub *)",
+      "Bash(flutter build *)",
+      "Bash(Get-ChildItem *)"
     ]
   }
 }

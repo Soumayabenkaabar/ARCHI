@@ -103,72 +103,226 @@ Color _phaseColor(String phase) {
 }
 
 void _openAttachmentPopup(BuildContext context, String name, String url) {
-  final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
+  // Extraire l'extension depuis l'URL (fiable) puis fallback sur le nom
+  final urlPath = Uri.tryParse(url)?.path ?? '';
+  final urlExt  = urlPath.contains('.') ? urlPath.split('.').last.split('?').first.toLowerCase() : '';
+  final nameExt = name.contains('.') ? name.split('.').last.toLowerCase() : '';
+  final ext     = urlExt.isNotEmpty ? urlExt : nameExt;
   final isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp'].contains(ext);
+  final isPdf   = ext == 'pdf';
 
   showDialog(
     context: context,
-    builder: (dctx) => Dialog(
-      backgroundColor: Colors.transparent,
-      insetPadding: const EdgeInsets.all(16),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: Container(
-          color: Colors.white,
-          constraints: const BoxConstraints(maxWidth: 700, maxHeight: 600),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            // Header
-            Container(
-              padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
-              decoration: const BoxDecoration(color: kAccent, borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-              child: Row(children: [
-                Icon(_iconForFileName(name), size: 16, color: Colors.white),
-                const SizedBox(width: 10),
-                Expanded(child: Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13), overflow: TextOverflow.ellipsis)),
-                IconButton(
-                  onPressed: () => Navigator.pop(dctx),
-                  icon: const Icon(LucideIcons.x, size: 18, color: Colors.white),
-                  padding: EdgeInsets.zero, constraints: const BoxConstraints(),
-                ),
-              ]),
+    builder: (dctx) {
+      final screenH = MediaQuery.of(dctx).size.height;
+      return Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            color: Colors.white,
+            constraints: BoxConstraints(
+              maxWidth: 820,
+              maxHeight: (isImage || isPdf) ? screenH * 0.85 : 320,
             ),
-            // Content
-            if (isImage)
-              Flexible(
-                child: InteractiveViewer(
-                  minScale: 0.5, maxScale: 5,
-                  child: Image.network(url, fit: BoxFit.contain,
-                    loadingBuilder: (_, child, progress) => progress == null
-                        ? child
-                        : const Center(child: CircularProgressIndicator(color: kAccent)),
-                    errorBuilder: (_, __, ___) => const Padding(
-                      padding: EdgeInsets.all(32),
-                      child: Icon(LucideIcons.imageOff, size: 40, color: kTextSub),
+            child: Column(children: [
+              // ── Header ───────────────────────────────────────────────
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 13, 8, 13),
+                color: kAccent,
+                child: Row(children: [
+                  Icon(_iconForFileName(name), size: 16, color: Colors.white),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(name,
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13),
+                      overflow: TextOverflow.ellipsis),
+                  ),
+                  // Ouvrir dans navigateur
+                  Tooltip(
+                    message: 'Ouvrir dans le navigateur',
+                    child: IconButton(
+                      onPressed: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+                      icon: const Icon(LucideIcons.externalLink, size: 15, color: Colors.white70),
+                      padding: EdgeInsets.zero, constraints: const BoxConstraints(),
                     ),
                   ),
-                ),
-              )
-            else
-              Padding(
-                padding: const EdgeInsets.all(32),
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(_iconForFileName(name), size: 48, color: kAccent),
-                  const SizedBox(height: 16),
-                  Text(name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: kTextMain), textAlign: TextAlign.center),
-                  const SizedBox(height: 24),
-                  ElevatedButton.icon(
-                    onPressed: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
-                    icon: const Icon(LucideIcons.download, size: 15, color: Colors.white),
-                    label: const Text('Ouvrir / Télécharger', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-                    style: ElevatedButton.styleFrom(backgroundColor: kAccent, elevation: 0, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    onPressed: () => Navigator.pop(dctx),
+                    icon: const Icon(LucideIcons.x, size: 18, color: Colors.white),
+                    padding: EdgeInsets.zero, constraints: const BoxConstraints(),
                   ),
                 ]),
               ),
-          ]),
+
+              // ── Contenu ───────────────────────────────────────────────
+              if (isImage)
+                Flexible(
+                  child: InteractiveViewer(
+                    minScale: 0.5, maxScale: 5,
+                    child: Image.network(url, fit: BoxFit.contain,
+                      loadingBuilder: (_, child, progress) => progress == null
+                          ? child
+                          : const Center(child: CircularProgressIndicator(color: kAccent)),
+                      errorBuilder: (_, __, ___) => const Padding(
+                        padding: EdgeInsets.all(32),
+                        child: Icon(LucideIcons.imageOff, size: 40, color: kTextSub),
+                      ),
+                    ),
+                  ),
+                )
+              else if (isPdf)
+                Flexible(child: _PdfPopupViewer(url: url))
+              else
+                Padding(
+                  padding: const EdgeInsets.all(32),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Container(
+                      width: 72, height: 72,
+                      decoration: BoxDecoration(color: kAccent.withOpacity(0.08), shape: BoxShape.circle),
+                      child: Icon(_iconForFileName(name), size: 32, color: kAccent),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(name,
+                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: kTextMain),
+                      textAlign: TextAlign.center),
+                    const SizedBox(height: 6),
+                    Text('Format $ext — aperçu non disponible',
+                      style: const TextStyle(fontSize: 12, color: kTextSub)),
+                    const SizedBox(height: 24),
+                    ElevatedButton.icon(
+                      onPressed: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+                      icon: const Icon(LucideIcons.download, size: 15, color: Colors.white),
+                      label: const Text('Télécharger', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                      style: ElevatedButton.styleFrom(backgroundColor: kAccent, elevation: 0,
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 13),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                    ),
+                  ]),
+                ),
+            ]),
+          ),
         ),
-      ),
-    ),
+      );
+    },
   );
+}
+
+// ── Visionneuse PDF (PDF.js) dans popup ──────────────────────────────────────
+class _PdfPopupViewer extends StatefulWidget {
+  final String url;
+  const _PdfPopupViewer({required this.url});
+  @override
+  State<_PdfPopupViewer> createState() => _PdfPopupViewerState();
+}
+
+class _PdfPopupViewerState extends State<_PdfPopupViewer> {
+  late final WebViewController _ctrl;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setNavigationDelegate(NavigationDelegate(
+        onPageFinished: (_) { if (mounted) setState(() => _loading = false); },
+      ))
+      ..loadHtmlString(_buildPdfHtml(widget.url));
+  }
+
+  String _buildPdfHtml(String url) {
+    final safeUrl = url.replaceAll("'", "\\'");
+    return '''
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #f1f5f9; display: flex; flex-direction: column; align-items: center; padding: 8px; min-height: 100vh; }
+    #loading { position: fixed; inset: 0; background: white; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 14px; z-index: 100; font-family: sans-serif; color: #6b7280; }
+    .spinner { width: 36px; height: 36px; border: 3px solid #e5e7eb; border-top-color: #3b82f6; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    canvas { display: block; margin: 0 auto 10px; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.12); max-width: 100%; }
+    #error { color: #ef4444; text-align: center; padding: 40px 20px; font-family: sans-serif; font-size: 14px; line-height: 1.6; }
+    #page-info { font-family: sans-serif; font-size: 12px; color: #6b7280; text-align: center; padding: 6px 0 10px; }
+  </style>
+</head>
+<body>
+  <div id="loading">
+    <div class="spinner"></div>
+    <span>Chargement du PDF...</span>
+  </div>
+  <div id="viewer"></div>
+  <div id="error" style="display:none"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    var pdfUrl = '$safeUrl';
+
+    pdfjsLib.getDocument({ url: pdfUrl, withCredentials: false }).promise
+      .then(function(pdf) {
+        document.getElementById('loading').style.display = 'none';
+        var viewer = document.getElementById('viewer');
+        var info = document.createElement('div');
+        info.id = 'page-info';
+        info.textContent = pdf.numPages + ' page(s)';
+        viewer.appendChild(info);
+
+        var renderPage = function(num) {
+          return pdf.getPage(num).then(function(page) {
+            var maxW = (window.innerWidth || 800) - 16;
+            var scale = Math.min(maxW / page.getViewport({scale: 1}).width, 2.0);
+            var vp = page.getViewport({scale: scale});
+            var canvas = document.createElement('canvas');
+            canvas.width = vp.width;
+            canvas.height = vp.height;
+            viewer.appendChild(canvas);
+            return page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+          });
+        };
+
+        var chain = Promise.resolve();
+        for (var i = 1; i <= pdf.numPages; i++) {
+          (function(n){ chain = chain.then(function(){ return renderPage(n); }); })(i);
+        }
+      })
+      .catch(function(e) {
+        document.getElementById('loading').style.display = 'none';
+        var err = document.getElementById('error');
+        err.style.display = 'block';
+        err.innerHTML = '<b>Impossible d\\'afficher le PDF</b><br>' + (e.message || String(e));
+      });
+  </script>
+</body>
+</html>
+''';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(children: [
+      WebViewWidget(controller: _ctrl),
+      if (_loading)
+        Container(
+          color: Colors.white,
+          child: const Center(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              CircularProgressIndicator(color: kAccent),
+              SizedBox(height: 12),
+              Text('Chargement du document...', style: TextStyle(color: kTextSub, fontSize: 13)),
+            ]),
+          ),
+        ),
+    ]);
+  }
 }
 
 IconData _iconForFileName(String name) {
@@ -1043,13 +1197,6 @@ class _TachesTabState extends State<_TachesTab> {
       .onPostgresChanges(
         event: PostgresChangeEvent.all,
         schema: 'public',
-        table: 'phases',
-        filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'projet_id', value: pid),
-        callback: (_) { if (mounted) _load(); },
-      )
-      .onPostgresChanges(
-        event: PostgresChangeEvent.all,
-        schema: 'public',
         table: 'membre_taches',
         filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'projet_id', value: pid),
         callback: (_) { if (mounted) _load(); },
@@ -1342,12 +1489,12 @@ class _TachesTabState extends State<_TachesTab> {
             if (nom.length > 100){ _snack(context, 'Le nom ne peut pas dépasser 100 caractères', kRed); return; }
             if (isEdit) {
               await PhaseService.updatePhase(existing!.id, ctrl.text.trim());
-              _snack(context, 'Phase modifiée', kAccent);
             } else {
               await PhaseService.addPhase(widget.project.id, ctrl.text.trim(), phases.length);
-              _snack(context, 'Phase créée', kAccent);
             }
-            Navigator.pop(context); _load();
+            Navigator.pop(context);
+            _load();
+            _snack(context, isEdit ? 'Phase modifiée' : 'Phase créée avec succès', kAccent);
           },
           label: isEdit ? 'Enregistrer' : 'Créer',
         ),
@@ -4026,7 +4173,11 @@ class _DocumentsTabState extends State<_DocumentsTab> {
         rows.add(IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           for (int j = 0; j < rowItems.length; j++) ...[
             if (j > 0) const SizedBox(width: 14),
-            Expanded(child: _DocumentCard(docUI: rowItems[j], onDelete: () async { await DocumentService.deleteDocument(rowItems[j].doc.id); _snack(context, 'Document supprimé', kRed); _load(); })),
+            Expanded(child: _DocumentCard(
+              docUI: rowItems[j],
+              onOpen: () => _openAttachmentPopup(context, rowItems[j].nomAffiche, rowItems[j].doc.url),
+              onDelete: () async { await DocumentService.deleteDocument(rowItems[j].doc.id); _snack(context, 'Document supprimé', kRed); _load(); },
+            )),
           ],
           if (rowItems.length < cols) ...[const SizedBox(width: 14), const Expanded(child: SizedBox())],
         ])));
@@ -4042,46 +4193,70 @@ class _DocumentsTabState extends State<_DocumentsTab> {
 }
 
 class _DocumentCard extends StatelessWidget {
-  final _DocUI docUI; final VoidCallback onDelete;
-  const _DocumentCard({required this.docUI, required this.onDelete});
+  final _DocUI docUI;
+  final VoidCallback onDelete;
+  final VoidCallback? onOpen;
+  const _DocumentCard({required this.docUI, required this.onDelete, this.onOpen});
 
   @override
   Widget build(BuildContext context) {
     final color = _phaseColor(docUI.phase); final doc = docUI.doc;
-    return Container(
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFEEEEEE)), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))]),
-      clipBehavior: Clip.hardEdge,
-      child: IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Container(width: 4, color: color),
-        Expanded(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(6), border: Border.all(color: color.withOpacity(0.3))), child: Text(docUI.phase, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: color))),
-            const Spacer(),
-            Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: const Color(0xFF374151), borderRadius: BorderRadius.circular(6)), child: Text(docUI.typeLabel, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Colors.white))),
-            const SizedBox(width: 8),
-            PopupMenuButton<String>(
-              onSelected: (v) async { if (v == 'delete') onDelete(); if (v == 'open') { final uri = Uri.tryParse(doc.url); if (uri != null) try { await launchUrl(uri); } catch (_) {} } },
-              itemBuilder: (_) => [const PopupMenuItem(value: 'open', child: Row(children: [Icon(LucideIcons.externalLink, size: 14, color: Color(0xFF3B82F6)), SizedBox(width: 8), Text('Ouvrir')])), const PopupMenuItem(value: 'delete', child: Row(children: [Icon(LucideIcons.trash2, size: 14, color: Color(0xFFEF4444)), SizedBox(width: 8), Text('Supprimer', style: TextStyle(color: Color(0xFFEF4444)))]))],
-              padding: EdgeInsets.zero,
-              child: const Icon(LucideIcons.moreVertical, size: 15, color: kTextSub),
-            ),
-          ]),
-          const SizedBox(height: 12),
-          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Container(width: 36, height: 36, decoration: BoxDecoration(color: color.withOpacity(0.08), borderRadius: BorderRadius.circular(8)), child: Icon(_docIconFromLabel(docUI.typeLabel), size: 16, color: color)),
-            const SizedBox(width: 12),
-            Expanded(child: Text(docUI.nomAffiche, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: kTextMain), maxLines: 2, overflow: TextOverflow.ellipsis)),
-          ]),
-          const SizedBox(height: 12),
-          const Divider(height: 1, color: Color(0xFFF3F4F6)),
-          const SizedBox(height: 10),
-          Row(children: [
-            Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(6)), child: Text('Version ${docUI.version}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: kTextSub))),
-            const Spacer(),
-            if (docUI.dateDoc != null && docUI.dateDoc!.isNotEmpty) Row(children: [const Icon(LucideIcons.calendar, size: 11, color: kTextSub), const SizedBox(width: 4), Text(docUI.dateDoc!, style: const TextStyle(fontSize: 11, color: kTextSub))]),
-          ]),
-        ]))),
-      ])),
+    return GestureDetector(
+      onTap: onOpen,
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFEEEEEE)),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
+        ),
+        clipBehavior: Clip.hardEdge,
+        child: IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Container(width: 4, color: color),
+          Expanded(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(6), border: Border.all(color: color.withOpacity(0.3))), child: Text(docUI.phase, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: color))),
+              const Spacer(),
+              Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: const Color(0xFF374151), borderRadius: BorderRadius.circular(6)), child: Text(docUI.typeLabel, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Colors.white))),
+              const SizedBox(width: 8),
+              PopupMenuButton<String>(
+                onSelected: (v) { if (v == 'open') onOpen?.call(); if (v == 'delete') onDelete(); },
+                itemBuilder: (_) => [
+                  const PopupMenuItem(value: 'open', child: Row(children: [Icon(LucideIcons.eye, size: 14, color: Color(0xFF3B82F6)), SizedBox(width: 8), Text('Voir le document')])),
+                  const PopupMenuItem(value: 'delete', child: Row(children: [Icon(LucideIcons.trash2, size: 14, color: Color(0xFFEF4444)), SizedBox(width: 8), Text('Supprimer', style: TextStyle(color: Color(0xFFEF4444)))])),
+                ],
+                padding: EdgeInsets.zero,
+                child: const Icon(LucideIcons.moreVertical, size: 15, color: kTextSub),
+              ),
+            ]),
+            const SizedBox(height: 12),
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Container(width: 36, height: 36, decoration: BoxDecoration(color: color.withOpacity(0.08), borderRadius: BorderRadius.circular(8)), child: Icon(_docIconFromLabel(docUI.typeLabel), size: 16, color: color)),
+              const SizedBox(width: 12),
+              Expanded(child: Text(docUI.nomAffiche, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: kTextMain), maxLines: 2, overflow: TextOverflow.ellipsis)),
+            ]),
+            const SizedBox(height: 12),
+            const Divider(height: 1, color: Color(0xFFF3F4F6)),
+            const SizedBox(height: 10),
+            Row(children: [
+              Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(6)), child: Text('Version ${docUI.version}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: kTextSub))),
+              const Spacer(),
+              if (docUI.dateDoc != null && docUI.dateDoc!.isNotEmpty) Row(children: [const Icon(LucideIcons.calendar, size: 11, color: kTextSub), const SizedBox(width: 4), Text(docUI.dateDoc!, style: const TextStyle(fontSize: 11, color: kTextSub))]),
+              const SizedBox(width: 8),
+              // Indicateur visuel "cliquable"
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(color: kAccent.withOpacity(0.08), borderRadius: BorderRadius.circular(4)),
+                child: Row(mainAxisSize: MainAxisSize.min, children: const [
+                  Icon(LucideIcons.eye, size: 10, color: kAccent),
+                  SizedBox(width: 3),
+                  Text('Voir', style: TextStyle(fontSize: 10, color: kAccent, fontWeight: FontWeight.w600)),
+                ]),
+              ),
+            ]),
+          ]))),
+        ])),
+      ),
     );
   }
 }

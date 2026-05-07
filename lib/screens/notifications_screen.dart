@@ -222,24 +222,181 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
                 // ── Vide ─────────────────────────────────────────────────────
                 if (_notifications.isEmpty)
-                  Center(child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 60),
-                    child: Column(children: [
-                      Container(
-                        width: 64, height: 64,
-                        decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(16)),
-                        child: const Icon(LucideIcons.bellOff, size: 28, color: kTextSub),
-                      ),
-                      const SizedBox(height: 14),
-                      const Text('Aucune notification', style: TextStyle(color: kTextMain, fontSize: 15, fontWeight: FontWeight.w600)),
-                      const SizedBox(height: 4),
-                      const Text('Tout est à jour !', style: TextStyle(color: kTextSub, fontSize: 13)),
-                    ]),
-                  )),
+                  const _NotifEmptyState(),
               ]),
             ),
     );
   }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  EMPTY STATE NOTIFICATIONS
+// ══════════════════════════════════════════════════════════════════════════════
+class _NotifEmptyState extends StatelessWidget {
+  const _NotifEmptyState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 32),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 500),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(36, 44, 36, 40),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: const Color(0xFFE5E7EB)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 24,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Illustration concentrique
+                Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Container(
+                      width: 130,
+                      height: 130,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: const Color(0xFF10B981).withOpacity(0.05),
+                      ),
+                    ),
+                    Container(
+                      width: 96,
+                      height: 96,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: const Color(0xFF10B981).withOpacity(0.09),
+                      ),
+                    ),
+                    Container(
+                      width: 68,
+                      height: 68,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [Color(0xFF34D399), Color(0xFF10B981)],
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFF10B981).withOpacity(0.3),
+                            blurRadius: 16,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      child: const Icon(LucideIcons.bellOff, size: 30, color: Colors.white),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 30),
+
+                const Text(
+                  'Aucune notification',
+                  style: TextStyle(
+                    fontSize: 21,
+                    fontWeight: FontWeight.w800,
+                    color: kTextMain,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Vous êtes à jour ! Les alertes sur vos projets, budgets et documents apparaîtront ici.',
+                  style: TextStyle(fontSize: 13, color: kTextSub, height: 1.65),
+                  textAlign: TextAlign.center,
+                ),
+
+                const SizedBox(height: 28),
+
+                // Chips des types de notifications
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.center,
+                  children: const [
+                    _NotifChip(icon: LucideIcons.checkSquare, label: 'Tâches', color: Color(0xFF3B82F6)),
+                    _NotifChip(icon: LucideIcons.banknote,    label: 'Budget',  color: Color(0xFFF59E0B)),
+                    _NotifChip(icon: LucideIcons.messageSquare, label: 'Commentaires', color: Color(0xFF8B5CF6)),
+                    _NotifChip(icon: LucideIcons.fileText,    label: 'Documents', color: Color(0xFF10B981)),
+                  ],
+                ),
+
+                const SizedBox(height: 32),
+
+                // Badge "tout est à jour"
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF10B981).withOpacity(0.07),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFF10B981).withOpacity(0.2)),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(LucideIcons.checkCircle, size: 16, color: Color(0xFF10B981)),
+                      SizedBox(width: 8),
+                      Text(
+                        'Tout est à jour — aucune alerte en attente',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Color(0xFF059669),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NotifChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  const _NotifChip({required this.icon, required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+    decoration: BoxDecoration(
+      color: color.withOpacity(0.08),
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: color.withOpacity(0.2)),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 12, color: color),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w600),
+        ),
+      ],
+    ),
+  );
 }
 
 // ── Stat Card ─────────────────────────────────────────────────────────────────

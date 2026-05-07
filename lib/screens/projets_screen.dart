@@ -4,6 +4,7 @@ import 'package:archi_manager/models/client.dart';
 import 'package:archi_manager/models/membre.dart';
 import 'package:archi_manager/screens/projet_detail_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../constants/colors.dart';
@@ -26,6 +27,7 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
   String _sortBy = 'statut'; // 'statut' | 'nom' | 'avancement'
   List<Project> projets = [];
   bool isLoading = true;
+  RealtimeChannel? _realtimeChannel;
 
   static const List<String> _statuts = ['En cours', 'Planification', 'Terminé'];
 
@@ -33,6 +35,43 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
   void initState() {
     super.initState();
     loadProjets();
+    _subscribeRealtime();
+  }
+
+  @override
+  void dispose() {
+    _realtimeChannel?.unsubscribe();
+    super.dispose();
+  }
+
+  void _subscribeRealtime() {
+    _realtimeChannel = Supabase.instance.client
+      .channel('projets-list')
+      .onPostgresChanges(
+        event: PostgresChangeEvent.delete,
+        schema: 'public',
+        table: 'projets',
+        callback: (payload) {
+          if (!mounted) return;
+          final deletedId = payload.oldRecord['id']?.toString();
+          if (deletedId != null) {
+            setState(() => projets.removeWhere((p) => p.id == deletedId));
+          }
+        },
+      )
+      .onPostgresChanges(
+        event: PostgresChangeEvent.insert,
+        schema: 'public',
+        table: 'projets',
+        callback: (_) { if (mounted) loadProjets(); },
+      )
+      .onPostgresChanges(
+        event: PostgresChangeEvent.update,
+        schema: 'public',
+        table: 'projets',
+        callback: (_) { if (mounted) loadProjets(); },
+      )
+      .subscribe();
   }
 
   Future<void> loadProjets() async {
@@ -45,6 +84,38 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
     } catch (e) {
       debugPrint('Erreur projets: $e');
       setState(() => isLoading = false);
+    }
+  }
+
+  Future<void> _confirmDeleteProject(Project project) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Supprimer le projet', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+        content: Text('Êtes-vous sûr de vouloir supprimer "${project.titre}" ?\nCette action est irréversible.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Annuler'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: kRed),
+            child: const Text('Supprimer', style: TextStyle(fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await ProjetService.deleteProjet(project.id);
+      await loadProjets();
+      if (!mounted) return;
+      _showSnack(context, 'Projet supprimé avec succès', const Color(0xFF10B981));
+    } catch (e) {
+      if (!mounted) return;
+      _showSnack(context, 'Erreur lors de la suppression: $e', kRed);
     }
   }
 
@@ -201,12 +272,15 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
                           ));
                         }
                       },
-                      child: ProjectFullCard(project: p),
+                      child: ProjectFullCard(
+                        project: p,
+                        onDelete: () => _confirmDeleteProject(p),
+                      ),
                     ),
                   )).toList(),
                 );
               }
-              return _ProjetGrid(projects: items, columns: cols, onRefresh: loadProjets, onViewProject: widget.onViewProject);
+              return _ProjetGrid(projects: items, columns: cols, onRefresh: loadProjets, onViewProject: widget.onViewProject, onDeleteProject: _confirmDeleteProject);
             }),
             const SizedBox(height: 24),
           ],
@@ -940,38 +1014,21 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
 
             // ── Liste projets ─────────────────────────────────────────────
             if (filtered.isEmpty)
-              Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 60),
-                  child: Column(
-                    children: [
-                      Icon(LucideIcons.folderOpen, size: 48, color: kTextSub.withOpacity(0.4)),
-                      const SizedBox(height: 14),
-                      Text(
-                        _searchQuery.isNotEmpty
-                            ? 'Aucun résultat pour "$_searchQuery"'
-                            : selectedFilter == 'Tous'
-                                ? 'Aucun projet trouvé'
-                                : 'Aucun projet "$selectedFilter"',
-                        style: const TextStyle(color: kTextSub, fontSize: 15, fontWeight: FontWeight.w500),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Appuyez sur "Nouveau projet" pour commencer',
-                        style: TextStyle(color: kTextSub.withOpacity(0.6), fontSize: 13),
-                      ),
-                    ],
-                  ),
-                ),
+              _EmptyState(
+                isSearching: _searchQuery.isNotEmpty,
+                isFiltered: selectedFilter != 'Tous',
+                filter: selectedFilter,
+                searchQuery: _searchQuery,
+                onCreateProject: showAddProjetDialog,
               )
             else
               LayoutBuilder(
                 builder: (context, constraints) {
                   if (constraints.maxWidth > 900) {
-                    return _ProjetGrid(projects: filtered, columns: 3, onRefresh: loadProjets, onViewProject: widget.onViewProject);
+                    return _ProjetGrid(projects: filtered, columns: 3, onRefresh: loadProjets, onViewProject: widget.onViewProject, onDeleteProject: _confirmDeleteProject);
                   }
                   if (constraints.maxWidth > 580) {
-                    return _ProjetGrid(projects: filtered, columns: 2, onRefresh: loadProjets, onViewProject: widget.onViewProject);
+                    return _ProjetGrid(projects: filtered, columns: 2, onRefresh: loadProjets, onViewProject: widget.onViewProject, onDeleteProject: _confirmDeleteProject);
                   }
                   return Column(
                     children: filtered.map((p) => Padding(
@@ -986,7 +1043,10 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
                             ));
                           }
                         },
-                        child: ProjectFullCard(project: p),
+                        child: ProjectFullCard(
+                          project: p,
+                          onDelete: () => _confirmDeleteProject(p),
+                        ),
                       ),
                     )).toList(),
                   );
@@ -1038,11 +1098,13 @@ class _ProjetGrid extends StatelessWidget {
   final int columns;
   final VoidCallback onRefresh;
   final Function(Project)? onViewProject;
+  final Future<void> Function(Project)? onDeleteProject;
   const _ProjetGrid({
     required this.projects,
     required this.columns,
     required this.onRefresh,
     this.onViewProject,
+    this.onDeleteProject,
   });
 
   @override
@@ -1074,7 +1136,10 @@ class _ProjetGrid extends StatelessWidget {
                         );
                       }
                     },
-                    child: ProjectFullCard(project: rowItems[j]),
+                    child: ProjectFullCard(
+                      project: rowItems[j],
+                      onDelete: onDeleteProject != null ? () => onDeleteProject!(rowItems[j]) : null,
+                    ),
                   ),
                 ),
               ],
@@ -1460,6 +1525,274 @@ class _LocationField extends StatelessWidget {
         ),
     ]);
   }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  EMPTY STATE
+// ══════════════════════════════════════════════════════════════════════════════
+class _EmptyState extends StatelessWidget {
+  final bool isSearching;
+  final bool isFiltered;
+  final String filter;
+  final String searchQuery;
+  final VoidCallback onCreateProject;
+
+  const _EmptyState({
+    required this.isSearching,
+    required this.isFiltered,
+    required this.filter,
+    required this.searchQuery,
+    required this.onCreateProject,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isGlobal = !isSearching && !isFiltered;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 32),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 500),
+          child: isGlobal ? _buildGlobal() : _buildSearchOrFilter(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGlobal() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(36, 44, 36, 40),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Illustration concentrique
+          Stack(
+            alignment: Alignment.center,
+            children: [
+              Container(
+                width: 130,
+                height: 130,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: kAccent.withOpacity(0.05),
+                ),
+              ),
+              Container(
+                width: 96,
+                height: 96,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: kAccent.withOpacity(0.09),
+                ),
+              ),
+              Container(
+                width: 68,
+                height: 68,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      kAccent.withOpacity(0.85),
+                      kAccent,
+                    ],
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: kAccent.withOpacity(0.3),
+                      blurRadius: 16,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: const Icon(LucideIcons.building2, size: 32, color: Colors.white),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 30),
+
+          const Text(
+            'Aucun projet pour l\'instant',
+            style: TextStyle(
+              fontSize: 21,
+              fontWeight: FontWeight.w800,
+              color: kTextMain,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Créez votre premier projet et commencez à gérer vos chantiers, votre équipe et vos budgets en un seul endroit.',
+            style: TextStyle(fontSize: 13, color: kTextSub, height: 1.65),
+            textAlign: TextAlign.center,
+          ),
+
+          const SizedBox(height: 28),
+
+          // Feature chips
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            alignment: WrapAlignment.center,
+            children: const [
+              _FeatureChip(icon: LucideIcons.checkSquare, label: 'Tâches'),
+              _FeatureChip(icon: LucideIcons.users, label: 'Équipe'),
+              _FeatureChip(icon: LucideIcons.banknote, label: 'Budget'),
+              _FeatureChip(icon: LucideIcons.fileText, label: 'Documents'),
+              _FeatureChip(icon: LucideIcons.mapPin, label: 'Localisation'),
+            ],
+          ),
+
+          const SizedBox(height: 34),
+
+          // CTA
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: onCreateProject,
+              icon: const Icon(LucideIcons.plus, size: 16, color: Colors.white),
+              label: const Text(
+                'Créer mon premier projet',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
+                ),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: kAccent,
+                padding: const EdgeInsets.symmetric(vertical: 15),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 0,
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 14),
+
+          // Lien secondaire
+          GestureDetector(
+            onTap: onCreateProject,
+            child: Text(
+              'Importer un projet existant',
+              style: TextStyle(
+                fontSize: 12,
+                color: kTextSub.withOpacity(0.7),
+                decoration: TextDecoration.underline,
+                decorationColor: kTextSub.withOpacity(0.4),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearchOrFilter() {
+    final icon = isSearching ? LucideIcons.search : LucideIcons.filter;
+    final title = isSearching
+        ? 'Aucun résultat pour "$searchQuery"'
+        : 'Aucun projet "$filter"';
+    final subtitle = isSearching
+        ? 'Essayez avec d\'autres mots-clés ou vérifiez l\'orthographe.'
+        : 'Aucun projet avec ce statut pour le moment.\nEssayez un autre filtre.';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 52, horizontal: 36),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: const Color(0xFFF1F5F9),
+              border: Border.all(color: const Color(0xFFE2E8F0), width: 1.5),
+            ),
+            child: Icon(icon, size: 28, color: const Color(0xFF94A3B8)),
+          ),
+          const SizedBox(height: 22),
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w700,
+              color: kTextMain,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            subtitle,
+            style: const TextStyle(fontSize: 13, color: kTextSub, height: 1.6),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FeatureChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  const _FeatureChip({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+    decoration: BoxDecoration(
+      color: kAccent.withOpacity(0.07),
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: kAccent.withOpacity(0.18)),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 12, color: kAccent),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 11,
+            color: kAccent,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 void _showSnack(BuildContext context, String msg, Color color) {

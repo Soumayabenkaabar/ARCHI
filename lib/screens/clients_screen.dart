@@ -790,75 +790,309 @@ class _ClientsScreenState extends State<ClientsScreen> {
 
               // ── LISTE ────────────────────────────────────────────
               if (filteredClients.isEmpty)
-                const Center(child: Text('Aucun client trouvé')),
+                _ClientEmptyState(
+                  isSearching: searchQuery.isNotEmpty,
+                  searchQuery: searchQuery,
+                  onAddClient: showAddClientDialog,
+                )
+              else
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    if (constraints.maxWidth < 580) {
+                      return Column(
+                        children: filteredClients
+                            .map((c) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 16),
+                                  child: ClientCard(
+                                    client: c,
+                                    stats: _projectStats[c.id],
+                                    onView: () => showViewClientDialog(c, stats: _projectStats[c.id]),
+                                    onEdit: () => showAddClientDialog(clientToEdit: c),
+                                    onDelete: () => showDeleteConfirmDialog(c),
+                                  ),
+                                ))
+                            .toList(),
+                      );
+                    }
 
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  if (constraints.maxWidth < 580) {
-                    return Column(
-                      children: filteredClients
-                          .map((c) => Padding(
-                                padding: const EdgeInsets.only(bottom: 16),
-                                child: ClientCard(
-                                  client: c,
-                                  stats: _projectStats[c.id],
-                                  onView: () => showViewClientDialog(c, stats: _projectStats[c.id]),
-                                  onEdit: () => showAddClientDialog(clientToEdit: c),
-                                  onDelete: () => showDeleteConfirmDialog(c),
-                                ),
-                              ))
-                          .toList(),
-                    );
-                  }
-
-                  final rows = <Widget>[];
-                  for (int i = 0; i < filteredClients.length; i += 2) {
-                    final rowItems = filteredClients.skip(i).take(2).toList();
-                    rows.add(
-                      IntrinsicHeight(
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: ClientCard(
-                                client: rowItems[0],
-                                stats: _projectStats[rowItems[0].id],
-                                onView: () => showViewClientDialog(rowItems[0], stats: _projectStats[rowItems[0].id]),
-                                onEdit: () =>
-                                    showAddClientDialog(clientToEdit: rowItems[0]),
-                                onDelete: () => showDeleteConfirmDialog(rowItems[0]),
-                              ),
-                            ),
-                            const SizedBox(width: 20),
-                            if (rowItems.length > 1)
+                    final rows = <Widget>[];
+                    for (int i = 0; i < filteredClients.length; i += 2) {
+                      final rowItems = filteredClients.skip(i).take(2).toList();
+                      rows.add(
+                        IntrinsicHeight(
+                          child: Row(
+                            children: [
                               Expanded(
                                 child: ClientCard(
-                                  client: rowItems[1],
-                                  stats: _projectStats[rowItems[1].id],
-                                  onView: () => showViewClientDialog(rowItems[1], stats: _projectStats[rowItems[1].id]),
-                                  onEdit: () =>
-                                      showAddClientDialog(clientToEdit: rowItems[1]),
-                                  onDelete: () => showDeleteConfirmDialog(rowItems[1]),
+                                  client: rowItems[0],
+                                  stats: _projectStats[rowItems[0].id],
+                                  onView: () => showViewClientDialog(rowItems[0], stats: _projectStats[rowItems[0].id]),
+                                  onEdit: () => showAddClientDialog(clientToEdit: rowItems[0]),
+                                  onDelete: () => showDeleteConfirmDialog(rowItems[0]),
                                 ),
-                              )
-                            else
-                              const Expanded(child: SizedBox()),
-                          ],
+                              ),
+                              const SizedBox(width: 20),
+                              if (rowItems.length > 1)
+                                Expanded(
+                                  child: ClientCard(
+                                    client: rowItems[1],
+                                    stats: _projectStats[rowItems[1].id],
+                                    onView: () => showViewClientDialog(rowItems[1], stats: _projectStats[rowItems[1].id]),
+                                    onEdit: () => showAddClientDialog(clientToEdit: rowItems[1]),
+                                    onDelete: () => showDeleteConfirmDialog(rowItems[1]),
+                                  ),
+                                )
+                              else
+                                const Expanded(child: SizedBox()),
+                            ],
+                          ),
                         ),
-                      ),
-                    );
-                    if (i + 2 < filteredClients.length) {
-                      rows.add(const SizedBox(height: 20));
+                      );
+                      if (i + 2 < filteredClients.length) {
+                        rows.add(const SizedBox(height: 20));
+                      }
                     }
-                  }
-                  return Column(children: rows);
-                },
-              ),
+                    return Column(children: rows);
+                  },
+                ),
             ],
           ),
         ),
       ),
     );
   }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  EMPTY STATE CLIENT
+// ══════════════════════════════════════════════════════════════════════════════
+class _ClientEmptyState extends StatelessWidget {
+  final bool isSearching;
+  final String searchQuery;
+  final VoidCallback onAddClient;
+
+  const _ClientEmptyState({
+    required this.isSearching,
+    required this.searchQuery,
+    required this.onAddClient,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 32),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 500),
+          child: isSearching ? _buildSearch() : _buildGlobal(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGlobal() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(36, 44, 36, 40),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Stack(
+            alignment: Alignment.center,
+            children: [
+              Container(
+                width: 130,
+                height: 130,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: kAccent.withOpacity(0.05),
+                ),
+              ),
+              Container(
+                width: 96,
+                height: 96,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: kAccent.withOpacity(0.09),
+                ),
+              ),
+              Container(
+                width: 68,
+                height: 68,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [kAccent.withOpacity(0.85), kAccent],
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: kAccent.withOpacity(0.3),
+                      blurRadius: 16,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: const Icon(LucideIcons.users, size: 30, color: Colors.white),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 30),
+
+          const Text(
+            'Aucun client pour l\'instant',
+            style: TextStyle(
+              fontSize: 21,
+              fontWeight: FontWeight.w800,
+              color: kTextMain,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Ajoutez votre premier client pour commencer à gérer vos relations et leurs accès au portail.',
+            style: TextStyle(fontSize: 13, color: kTextSub, height: 1.65),
+            textAlign: TextAlign.center,
+          ),
+
+          const SizedBox(height: 28),
+
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            alignment: WrapAlignment.center,
+            children: const [
+              _ClientChip(icon: LucideIcons.mail, label: 'Email'),
+              _ClientChip(icon: LucideIcons.phone, label: 'Téléphone'),
+              _ClientChip(icon: LucideIcons.briefcase, label: 'Projets liés'),
+              _ClientChip(icon: LucideIcons.shieldCheck, label: 'Portail client'),
+            ],
+          ),
+
+          const SizedBox(height: 34),
+
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: onAddClient,
+              icon: const Icon(LucideIcons.userPlus, size: 16, color: Colors.white),
+              label: const Text(
+                'Ajouter mon premier client',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
+                ),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: kAccent,
+                padding: const EdgeInsets.symmetric(vertical: 15),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 0,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearch() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 52, horizontal: 36),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: const Color(0xFFF1F5F9),
+              border: Border.all(color: const Color(0xFFE2E8F0), width: 1.5),
+            ),
+            child: const Icon(LucideIcons.search, size: 28, color: Color(0xFF94A3B8)),
+          ),
+          const SizedBox(height: 22),
+          Text(
+            'Aucun résultat pour "$searchQuery"',
+            style: const TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w700,
+              color: kTextMain,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Essayez avec un autre nom ou email.',
+            style: TextStyle(fontSize: 13, color: kTextSub, height: 1.6),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ClientChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  const _ClientChip({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+    decoration: BoxDecoration(
+      color: kAccent.withOpacity(0.07),
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: kAccent.withOpacity(0.18)),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 12, color: kAccent),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 11,
+            color: kAccent,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 // ── Widget champ formulaire ────────────────────────────────────────────────────
