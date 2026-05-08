@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' show max;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -64,18 +65,59 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   static final _db = Supabase.instance.client;
 
   bool _loading = true;
+  bool _refreshing = false;
   List<Project> _projets = [];
   List<Map<String, dynamic>> _taches = [];
   List<Map<String, dynamic>> _factures = [];
+  Timer? _refreshTimer;
+  RealtimeChannel? _realtimeChannel;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _subscribeRealtime();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (mounted) _load(silent: true);
+    });
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    _realtimeChannel?.unsubscribe();
+    super.dispose();
+  }
+
+  void _subscribeRealtime() {
+    _realtimeChannel = _db.channel('analytics-realtime')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'projets',
+          callback: (_) { if (mounted) _load(silent: true); },
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'taches',
+          callback: (_) { if (mounted) _load(silent: true); },
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'factures',
+          callback: (_) { if (mounted) _load(silent: true); },
+        )
+        .subscribe();
+  }
+
+  Future<void> _load({bool silent = false}) async {
+    if (silent) {
+      setState(() => _refreshing = true);
+    } else {
+      setState(() => _loading = true);
+    }
     try {
       final results = await Future.wait<dynamic>([
         ProjetService.getProjets(),
@@ -88,10 +130,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           _taches   = (results[1] as List).cast<Map<String, dynamic>>();
           _factures = (results[2] as List).cast<Map<String, dynamic>>();
           _loading  = false;
+          _refreshing = false;
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() { _loading = false; _refreshing = false; });
     }
   }
 
@@ -127,12 +170,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       return const Center(child: CircularProgressIndicator(color: kAccent));
     }
 
-    return Container(
-      color: kBg,
-      child: SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(pad, pad, pad, pad + 20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    return Stack(
+      children: [
+        Container(
+          color: kBg,
+          child: SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(pad, pad, pad, pad + 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // ── Header ──────────────────────────────────────────────────────
             Row(
@@ -267,9 +312,15 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               _GanttCard(projects: _projets),
             ] else
               _EmptyState(),
-          ],
+              ],
+            ),
+          ),
         ),
-      ),
+        if (_refreshing) const Positioned(
+          top: 0, left: 0, right: 0,
+          child: LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
+        ),
+      ],
     );
   }
 }

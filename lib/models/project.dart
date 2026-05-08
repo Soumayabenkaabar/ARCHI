@@ -1,4 +1,5 @@
 // Supabase : ALTER TABLE projets ADD COLUMN latitude FLOAT8, ADD COLUMN longitude FLOAT8;
+// Supabase : ALTER TABLE projets ADD COLUMN telephone TEXT DEFAULT '';
 
 class Project {
   final String id;
@@ -20,6 +21,7 @@ class Project {
   final bool portailClient;
   final double? latitude;
   final double? longitude;
+  final String telephone;
 
   Project({
     required this.id,
@@ -41,6 +43,7 @@ class Project {
     this.portailClient = false,
     this.latitude,
     this.longitude,
+    this.telephone = '',
   });
 
   bool get hasPosition => latitude != null && longitude != null;
@@ -82,11 +85,11 @@ class Project {
     portailClient: j['portail_client'] as bool? ?? false,
     latitude:     (j['latitude']  as num?)?.toDouble(),
     longitude:    (j['longitude'] as num?)?.toDouble(),
+    telephone:    j['telephone'] as String? ?? '',
   );
 
   Map<String, dynamic> toJson() {
     final m = <String, dynamic>{
-      'client_id':      clientId,
       'titre':          titre,
       'description':    description,
       'statut':         statut,
@@ -101,8 +104,10 @@ class Project {
       'taches':         taches,
       'portail_client': portailClient,
     };
-    if (latitude  != null) m['latitude']  = latitude;
-    if (longitude != null) m['longitude'] = longitude;
+    if (clientId.isNotEmpty)  m['client_id'] = clientId;
+    if (latitude  != null)    m['latitude']  = latitude;
+    if (longitude != null)    m['longitude'] = longitude;
+    if (telephone.isNotEmpty) m['telephone'] = telephone;
     return m;
   }
 }

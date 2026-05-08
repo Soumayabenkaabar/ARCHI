@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../constants/colors.dart';
 import '../models/notification.dart';
 import '../service/notification_service.dart';
@@ -7,29 +9,78 @@ import '../service/notification_service.dart';
 class NotificationsScreen extends StatefulWidget {
   final VoidCallback? onNotifChanged;
   final void Function(String projetTitre, int tabIndex)? onNavigate;
-  const NotificationsScreen({super.key, this.onNotifChanged, this.onNavigate});
+  final Stream<void>? refreshStream;
+  const NotificationsScreen({super.key, this.onNotifChanged, this.onNavigate, this.refreshStream});
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
 }
 
-class _NotificationsScreenState extends State<NotificationsScreen> {
+class _NotificationsScreenState extends State<NotificationsScreen>
+    with SingleTickerProviderStateMixin {
   List<AppNotification> _notifications = [];
   bool _loading = true;
+  bool _refreshing = false;
+  Timer? _refreshTimer;
+  RealtimeChannel? _realtimeChannel;
+  StreamSubscription<void>? _refreshSub;
+  late final AnimationController _spinCtrl;
 
   @override
   void initState() {
     super.initState();
+    _spinCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
     _load();
+    _subscribeRealtime();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (mounted) _load(silent: true);
+    });
+    _refreshSub = widget.refreshStream?.listen((_) {
+      if (mounted) _load(silent: true);
+    });
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    _realtimeChannel?.unsubscribe();
+    _refreshSub?.cancel();
+    _spinCtrl.dispose();
+    super.dispose();
+  }
+
+  void _subscribeRealtime() {
+    _realtimeChannel = Supabase.instance.client
+        .channel('notifications-realtime')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'notifications',
+          callback: (_) { if (mounted) _load(silent: true); },
+        )
+        .subscribe();
+  }
+
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) {
+      setState(() => _loading = true);
+    } else {
+      setState(() => _refreshing = true);
+      _spinCtrl.repeat();
+    }
     try {
       final data = await NotificationService.getAll();
-      if (mounted) setState(() { _notifications = data; _loading = false; });
+      if (mounted) setState(() {
+        _notifications = data;
+        _loading = false;
+        _refreshing = false;
+      });
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() { _loading = false; _refreshing = false; });
     }
+    if (mounted) _spinCtrl.stop();
   }
 
   Future<void> _markAllRead() async {
@@ -43,15 +94,31 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Future<void> _markRead(String id) async {
-    setState(() {
-      final n = _notifications.firstWhere((n) => n.id == id);
-      n.lue = true;
-    });
-    try {
-      await NotificationService.markAsRead(id);
-      widget.onNotifChanged?.call();
-    } catch (e) {
-      _snack('Erreur : $e');
+    final notif = _notifications.firstWhere((n) => n.id == id);
+
+    if (notif.type == NotifType.commentaire) {
+      // Mark all comment notifications for the same project as read at once
+      setState(() {
+        for (final n in _notifications) {
+          if (n.projet == notif.projet && n.type == NotifType.commentaire) {
+            n.lue = true;
+          }
+        }
+      });
+      try {
+        await NotificationService.markCommentairesAsRead(notif.projet);
+        widget.onNotifChanged?.call();
+      } catch (e) {
+        _snack('Erreur : $e');
+      }
+    } else {
+      setState(() => notif.lue = true);
+      try {
+        await NotificationService.markAsRead(id);
+        widget.onNotifChanged?.call();
+      } catch (e) {
+        _snack('Erreur : $e');
+      }
     }
   }
 
@@ -150,6 +217,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               padding: EdgeInsets.fromLTRB(pad, pad, pad, pad + 20),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
 
+                if (_refreshing) const LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
+
                 // ── Header ──────────────────────────────────────────────────
                 Row(children: [
                   const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -157,10 +226,17 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     SizedBox(height: 4),
                     Text('Restez informé des alertes et activités importantes', style: TextStyle(color: kTextSub, fontSize: 13)),
                   ])),
-                  IconButton(
-                    onPressed: _load,
-                    tooltip: 'Actualiser',
-                    icon: const Icon(LucideIcons.refreshCw, size: 18, color: kTextSub),
+                  RotationTransition(
+                    turns: _spinCtrl,
+                    child: IconButton(
+                      onPressed: _refreshing ? null : _load,
+                      tooltip: 'Actualiser',
+                      icon: Icon(
+                        LucideIcons.refreshCw,
+                        size: 18,
+                        color: _refreshing ? kAccent : kTextSub,
+                      ),
+                    ),
                   ),
                   if (nbNonLues > 0) ...[
                     OutlinedButton.icon(

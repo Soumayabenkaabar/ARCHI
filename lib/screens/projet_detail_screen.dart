@@ -35,6 +35,7 @@ import '../utils/glb_parser.dart';
 import '../widgets/sidebar_widget.dart';
 import '../widgets/map_location_picker.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:http/http.dart' as http;
 
 // ── Helpers globaux ───────────────────────────────────────────────────────────
 Color _tacheColor(String s) {
@@ -610,6 +611,7 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
   int _tachesTerminees = 0;
   bool _loadingProgression = true;
   RealtimeChannel? _realtimeChannel;
+  Timer? _refreshTimer;
 
   @override
   void initState() {
@@ -623,6 +625,12 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
     _loadCommentCount();
     _loadProgression();
     _subscribeRealtime();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (mounted) {
+        _loadProgression();
+        _loadCommentCount();
+      }
+    });
   }
 
   void _subscribeRealtime() {
@@ -658,6 +666,16 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
         .subscribe();
   }
 
+  // Derives project statut from current task states.
+  // 'annule' is never auto-changed (manual override).
+  String _computeStatutAuto(List<Tache> taches) {
+    if (_project.statut == 'annule') return 'annule';
+    if (taches.isEmpty) return _project.statut;
+    if (taches.every((t) => t.statut == 'termine')) return 'termine';
+    if (taches.any((t) => t.statut == 'en_cours' || t.statut == 'termine')) return 'en_cours';
+    return 'en_attente';
+  }
+
   Future<void> _loadProgression() async {
     try {
       final taches = await TacheService.getTaches(_project.id);
@@ -675,10 +693,15 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
         return sum + t.budgetEstime * factor;
       });
 
-      await Future.wait([
+      final nouveauStatut = _computeStatutAuto(taches);
+
+      final updates = <Future>[
         ProjetService.updateAvancement(_project.id, avancement),
         ProjetService.updateBudgetDepense(_project.id, budgetDepense),
-      ]);
+        if (nouveauStatut != _project.statut)
+          ProjetService.updateStatutProjet(_project.id, nouveauStatut),
+      ];
+      await Future.wait(updates);
 
       if (!mounted) return;
       setState(() {
@@ -690,7 +713,7 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
           clientId: _project.clientId,
           titre: _project.titre,
           description: _project.description,
-          statut: _project.statut,
+          statut: nouveauStatut,
           avancement: avancement,
           dateDebut: _project.dateDebut,
           dateFin: _project.dateFin,
@@ -956,18 +979,25 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
 
   Future<void> _editInfoProjet() async {
     final clientCtrl = TextEditingController(text: _project.client);
-    final locCtrl = TextEditingController(text: _project.localisation);
-    final chefCtrl = TextEditingController(text: _project.chef);
-    final budgetCtrl = TextEditingController(
-      text: _project.budgetTotal.toStringAsFixed(0),
-    );
+    final locCtrl    = TextEditingController(text: _project.localisation);
+    final budgetCtrl = TextEditingController(text: _project.budgetTotal.toStringAsFixed(0));
+
+    // Charger la liste des membres pour le dropdown chef
+    List<Membre> membres = [];
+    try { membres = await MembreService.getMembres(); } catch (_) {}
+    final nomsMembres = membres.map((m) => m.nom).toList();
+    // Pré-remplir avec le chef actuel, qu'il soit dans la liste ou non
+    String? selectedChef = _project.chef.isNotEmpty ? _project.chef : null;
 
     DateTime? dateDebut = _parseDate(_project.dateDebut);
-    DateTime? dateFin = _parseDate(_project.dateFin);
-    String? dateError;
+    DateTime? dateFin   = _parseDate(_project.dateFin);
+    String? _debutError;
+    String? _finError;
     LatLng? pickedPosition = _project.hasPosition
         ? LatLng(_project.latitude!, _project.longitude!)
         : null;
+
+    if (!mounted) return;
 
     InputDecoration _dec(String label, IconData icon) => InputDecoration(
       labelText: label,
@@ -982,9 +1012,10 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDlg) {
           Future<void> pickDebut() async {
+            final today = DateTime.now();
             final picked = await showDatePicker(
               context: ctx,
-              initialDate: dateDebut ?? DateTime.now(),
+              initialDate: dateDebut ?? today,
               firstDate: DateTime(2000),
               lastDate: DateTime(2100),
               helpText: 'Date de début',
@@ -992,89 +1023,105 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
             if (picked == null) return;
             setDlg(() {
               dateDebut = picked;
-              if (dateFin != null && picked.isAfter(dateFin!)) {
-                dateError = 'La date de début doit être avant la date de fin';
+              _debutError = null;
+              if (dateFin != null && !dateFin!.isAfter(picked)) {
+                dateFin = null;
+                _finError = 'La date de fin doit être après la date de début';
               } else {
-                dateError = null;
+                _finError = null;
               }
             });
           }
 
           Future<void> pickFin() async {
+            final today  = DateTime.now();
+            final minDate = dateDebut != null
+                ? dateDebut!.add(const Duration(days: 1))
+                : DateTime(2000);
+            final initDate = dateFin != null && !dateFin!.isBefore(minDate)
+                ? dateFin!
+                : (today.isBefore(minDate) ? minDate : today);
             final picked = await showDatePicker(
               context: ctx,
-              initialDate: dateFin ?? (dateDebut ?? DateTime.now()),
-              firstDate: dateDebut ?? DateTime(2000),
+              initialDate: initDate,
+              firstDate: minDate,
               lastDate: DateTime(2100),
               helpText: 'Date de fin',
             );
             if (picked == null) return;
             setDlg(() {
               dateFin = picked;
-              dateError = null;
+              _finError = null;
             });
           }
 
-          Widget dateTile(
-            String label,
-            DateTime? val,
-            VoidCallback onTap,
-          ) => InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(10),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                border: Border.all(color: const Color(0xFFD1D5DB)),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Row(
-                children: [
-                  Icon(LucideIcons.calendar, size: 16, color: kTextSub),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
+          // Tuile date avec affichage d'erreur intégré
+          Widget dateTile(String label, DateTime? val, VoidCallback onTap, String? errorText, {String? rawFallback}) =>
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                InkWell(
+                  onTap: onTap,
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: errorText != null ? kRed.withOpacity(0.03) : null,
+                      border: Border.all(
+                        color: errorText != null ? kRed : const Color(0xFFD1D5DB),
+                        width: errorText != null ? 1.5 : 1,
+                      ),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
                       children: [
-                        Text(
-                          label,
-                          style: const TextStyle(fontSize: 11, color: kTextSub),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          _displayDate(val),
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: val == null ? kTextSub : kTextMain,
-                            fontWeight: FontWeight.w500,
+                        Icon(LucideIcons.calendar, size: 16, color: errorText != null ? kRed : kTextSub),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(label, style: TextStyle(fontSize: 11, color: errorText != null ? kRed : kTextSub)),
+                              const SizedBox(height: 2),
+                              Text(
+                                val != null
+                                    ? _displayDate(val)
+                                    : (rawFallback?.isNotEmpty == true ? rawFallback! : '— Choisir une date'),
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: (val == null && (rawFallback == null || rawFallback.isEmpty))
+                                      ? (errorText != null ? kRed : kTextSub)
+                                      : kTextMain,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
+                        Icon(LucideIcons.chevronDown, size: 14, color: errorText != null ? kRed : kTextSub),
                       ],
                     ),
                   ),
-                  const Icon(
-                    LucideIcons.chevronDown,
-                    size: 14,
-                    color: kTextSub,
-                  ),
+                ),
+                if (errorText != null) ...[
+                  const SizedBox(height: 4),
+                  Row(children: [
+                    const Icon(Icons.error_outline, size: 12, color: kRed),
+                    const SizedBox(width: 3),
+                    Flexible(child: Text(errorText, style: const TextStyle(fontSize: 11, color: kRed))),
+                  ]),
                 ],
-              ),
-            ),
-          );
+              ],
+            );
 
           return AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             title: const Row(
               children: [
                 Icon(LucideIcons.pencil, size: 18, color: kAccent),
                 SizedBox(width: 8),
-                Text(
-                  'Modifier les informations',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-                ),
+                Text('Modifier les informations', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
               ],
             ),
             content: SingleChildScrollView(
@@ -1094,18 +1141,27 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
                   // Sélecteur de position sur carte
                   InkWell(
                     onTap: () async {
-                      final pos = await showMapLocationPicker(
-                        ctx,
-                        initial: pickedPosition,
-                      );
-                      if (pos != null) setDlg(() => pickedPosition = pos);
+                      final pos = await showMapLocationPicker(ctx, initial: pickedPosition);
+                      if (pos != null) {
+                        setDlg(() => pickedPosition = pos);
+                        try {
+                          final uri = Uri.https(
+                            'nominatim.openstreetmap.org', '/reverse',
+                            {'lat': pos.latitude.toString(), 'lon': pos.longitude.toString(), 'format': 'json', 'accept-language': 'fr'},
+                          );
+                          final res = await http.get(uri, headers: {'User-Agent': 'ArchiManager/1.0'});
+                          final data = jsonDecode(res.body) as Map<String, dynamic>;
+                          final addr = data['address'] as Map<String, dynamic>? ?? {};
+                          final city  = (addr['city'] ?? addr['town'] ?? addr['village'] ?? addr['county'] ?? '').toString();
+                          final state = (addr['state'] ?? '').toString();
+                          final loc   = [city, state].where((s) => s.isNotEmpty).join(', ');
+                          if (loc.isNotEmpty) setDlg(() => locCtrl.text = loc);
+                        } catch (_) {}
+                      }
                     },
                     borderRadius: BorderRadius.circular(8),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 9,
-                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
                       decoration: BoxDecoration(
                         color: pickedPosition != null
                             ? const Color(0xFF10B981).withOpacity(0.07)
@@ -1120,13 +1176,9 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
                       child: Row(
                         children: [
                           Icon(
-                            pickedPosition != null
-                                ? LucideIcons.checkCircle
-                                : LucideIcons.mapPin,
+                            pickedPosition != null ? LucideIcons.checkCircle : LucideIcons.mapPin,
                             size: 13,
-                            color: pickedPosition != null
-                                ? const Color(0xFF10B981)
-                                : kAccent,
+                            color: pickedPosition != null ? const Color(0xFF10B981) : kAccent,
                           ),
                           const SizedBox(width: 7),
                           Expanded(
@@ -1137,9 +1189,7 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
-                                color: pickedPosition != null
-                                    ? const Color(0xFF10B981)
-                                    : kAccent,
+                                color: pickedPosition != null ? const Color(0xFF10B981) : kAccent,
                               ),
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -1148,11 +1198,7 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
                             const SizedBox(width: 4),
                             GestureDetector(
                               onTap: () => setDlg(() => pickedPosition = null),
-                              child: const Icon(
-                                Icons.close_rounded,
-                                size: 14,
-                                color: Color(0xFF10B981),
-                              ),
+                              child: const Icon(Icons.close_rounded, size: 14, color: Color(0xFF10B981)),
                             ),
                           ],
                         ],
@@ -1160,38 +1206,62 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
                     ),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
-                    controller: chefCtrl,
-                    decoration: _dec('Chef de projet', LucideIcons.user),
+                  // Chef de projet — sélection via dialog
+                  InkWell(
+                    onTap: nomsMembres.isEmpty ? null : () async {
+                      final picked = await showDialog<String>(
+                        context: ctx,
+                        builder: (c) => SimpleDialog(
+                          title: const Text('Chef de projet', style: TextStyle(fontWeight: FontWeight.w700)),
+                          children: nomsMembres.map((nom) => SimpleDialogOption(
+                            onPressed: () => Navigator.pop(c, nom),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 4),
+                              child: Text(nom, style: const TextStyle(fontSize: 14)),
+                            ),
+                          )).toList(),
+                        ),
+                      );
+                      if (picked != null) setDlg(() => selectedChef = picked);
+                    },
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: const Color(0xFFD1D5DB)),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(children: [
+                        Icon(LucideIcons.user, size: 16, color: kTextSub),
+                        const SizedBox(width: 12),
+                        Expanded(child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('Chef de projet', style: TextStyle(fontSize: 11, color: kTextSub)),
+                            const SizedBox(height: 2),
+                            Text(
+                              selectedChef ?? 'Sélectionner un chef',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: selectedChef != null ? kTextMain : kTextSub,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        )),
+                        Icon(nomsMembres.isEmpty ? LucideIcons.lock : LucideIcons.chevronDown, size: 14, color: kTextSub),
+                      ]),
+                    ),
                   ),
                   const SizedBox(height: 12),
-                  dateTile('Date de début', dateDebut, pickDebut),
+                  dateTile('Date de début', dateDebut, pickDebut, _debutError, rawFallback: _project.dateDebut),
                   const SizedBox(height: 12),
-                  dateTile('Date de fin', dateFin, pickFin),
-                  if (dateError != null) ...[
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        const Icon(
-                          LucideIcons.alertCircle,
-                          size: 13,
-                          color: kRed,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          dateError!,
-                          style: const TextStyle(fontSize: 11, color: kRed),
-                        ),
-                      ],
-                    ),
-                  ],
+                  dateTile('Date de fin', dateFin, pickFin, _finError, rawFallback: _project.dateFin),
                   const SizedBox(height: 12),
                   TextField(
                     controller: budgetCtrl,
-                    decoration: _dec(
-                      'Budget total (DT)',
-                      LucideIcons.dollarSign,
-                    ),
+                    decoration: _dec('Budget total (DT)', LucideIcons.dollarSign),
                     keyboardType: TextInputType.number,
                   ),
                 ],
@@ -1203,17 +1273,28 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
                 child: const Text('Annuler'),
               ),
               ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: kAccent,
-                  elevation: 0,
-                ),
-                onPressed: dateError != null
-                    ? null
-                    : () => Navigator.pop(ctx, true),
-                child: const Text(
-                  'Enregistrer',
-                  style: TextStyle(color: Colors.white),
-                ),
+                style: ElevatedButton.styleFrom(backgroundColor: kAccent, elevation: 0),
+                onPressed: () {
+                  bool valid = true;
+                  setDlg(() {
+                    _debutError = null;
+                    _finError   = null;
+                    if (dateDebut != null && dateFin == null) {
+                      _finError = 'Date de fin requise si une date de début est définie';
+                      valid = false;
+                    }
+                    if (dateFin != null && dateDebut == null) {
+                      _debutError = 'Date de début requise si une date de fin est définie';
+                      valid = false;
+                    }
+                    if (dateDebut != null && dateFin != null && !dateFin!.isAfter(dateDebut!)) {
+                      _finError = 'La date de fin doit être après la date de début';
+                      valid = false;
+                    }
+                  });
+                  if (valid) Navigator.pop(ctx, true);
+                },
+                child: const Text('Enregistrer', style: TextStyle(color: Colors.white)),
               ),
             ],
           );
@@ -1231,21 +1312,19 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
       statut: _project.statut,
       avancement: _project.avancement,
       dateDebut: dateDebut == null ? null : _fmtDate(dateDebut!),
-      dateFin: dateFin == null ? null : _fmtDate(dateFin!),
-      budgetTotal:
-          double.tryParse(
-            budgetCtrl.text.replaceAll(' ', '').replaceAll(',', '.'),
-          ) ??
-          _project.budgetTotal,
+      dateFin:   dateFin   == null ? null : _fmtDate(dateFin!),
+      budgetTotal: double.tryParse(
+        budgetCtrl.text.replaceAll(' ', '').replaceAll(',', '.'),
+      ) ?? _project.budgetTotal,
       budgetDepense: _project.budgetDepense,
-      client: clientCtrl.text.trim(),
+      client:       clientCtrl.text.trim(),
       localisation: locCtrl.text.trim(),
-      chef: chefCtrl.text.trim(),
-      taches: _project.taches,
-      membres: _project.membres,
-      docs: _project.docs,
+      chef:         selectedChef ?? _project.chef,
+      taches:       _project.taches,
+      membres:      _project.membres,
+      docs:         _project.docs,
       portailClient: _project.portailClient,
-      latitude: pickedPosition?.latitude,
+      latitude:  pickedPosition?.latitude,
       longitude: pickedPosition?.longitude,
     );
 
@@ -1299,6 +1378,7 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
     _realtimeChannel?.unsubscribe();
     _tabController.dispose();
     super.dispose();
@@ -1930,22 +2010,31 @@ class _TachesTabState extends State<_TachesTab> {
   List<Phase> phases = [];
   Model3D? _model3D;
   bool loading = true;
+  bool _refreshing = false;
   bool _showGantt = false;
   Map<String, List<Map<String, String>>> _membresParTache = {};
   Map<String, List<String>> _membresNomParTache = {};
   List<Membre> _tousLesMembres = [];
   Map<String, List<Conge>> _congesParMembre = {};
   RealtimeChannel? _channel;
+  Timer? _refreshTimer;
 
   @override
   void initState() {
     super.initState();
     _load();
     _subscribeRealtime();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+      if (!mounted) return;
+      setState(() => _refreshing = true);
+      await _load();
+      if (mounted) setState(() => _refreshing = false);
+    });
   }
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
     _channel?.unsubscribe();
     super.dispose();
   }
@@ -2054,6 +2143,7 @@ class _TachesTabState extends State<_TachesTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (_refreshing) const LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
           if (isMobile) ...[
             // ── Ligne 1 : Titre ──────────────────────────────────────────────
             Row(
@@ -4717,17 +4807,26 @@ class _FinancesTab extends StatefulWidget {
 class _FinancesTabState extends State<_FinancesTab> {
   List<Facture> _factures = [];
   bool _loading = true;
+  bool _refreshing = false;
   RealtimeChannel? _channel;
+  Timer? _refreshTimer;
 
   @override
   void initState() {
     super.initState();
     _load();
     _subscribeRealtime();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+      if (!mounted) return;
+      setState(() => _refreshing = true);
+      await _load();
+      if (mounted) setState(() => _refreshing = false);
+    });
   }
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
     _channel?.unsubscribe();
     super.dispose();
   }
@@ -4819,6 +4918,7 @@ class _FinancesTabState extends State<_FinancesTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (_refreshing) const LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
           // ── HEADER ─────────────────────────────────────────────────────────
           _buildHeader(isMobile),
           const SizedBox(height: 20),
@@ -8289,19 +8389,28 @@ class _DocumentsTabState extends State<_DocumentsTab> {
   List<Document> _documents = [];
   List<_DocUI> _documentsUI = [];
   bool _loading = true;
+  bool _refreshing = false;
   String _filterPhase = 'Toutes les phases';
   String _sortBy = 'date'; // 'date' | 'version' | 'nom'
   RealtimeChannel? _channel;
+  Timer? _refreshTimer;
 
   @override
   void initState() {
     super.initState();
     _load();
     _subscribeRealtime();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+      if (!mounted) return;
+      setState(() => _refreshing = true);
+      await _load();
+      if (mounted) setState(() => _refreshing = false);
+    });
   }
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
     _channel?.unsubscribe();
     super.dispose();
   }
@@ -8374,12 +8483,13 @@ class _DocumentsTabState extends State<_DocumentsTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (_refreshing) const LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Expanded(
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       'Documents & Livrables',
@@ -9655,17 +9765,26 @@ class _EquipeTab extends StatefulWidget {
 class _EquipeTabState extends State<_EquipeTab> {
   List<Membre> membres = [];
   bool loading = true;
+  bool _refreshing = false;
   RealtimeChannel? _channel;
+  Timer? _refreshTimer;
 
   @override
   void initState() {
     super.initState();
     _load();
     _subscribeRealtime();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+      if (!mounted) return;
+      setState(() => _refreshing = true);
+      await _load();
+      if (mounted) setState(() => _refreshing = false);
+    });
   }
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
     _channel?.unsubscribe();
     super.dispose();
   }
@@ -9792,6 +9911,7 @@ class _EquipeTabState extends State<_EquipeTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (_refreshing) const LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
           // ── Header ──────────────────────────────────────────────────────
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -10306,6 +10426,8 @@ class _SuiviPhotosTab extends StatefulWidget {
 
 class _SuiviPhotosTabState extends State<_SuiviPhotosTab> {
   int _subTab = 0;
+  Timer? _refreshTimer;
+  bool _refreshing = false;
 
   // ── Pointage ──────────────────────────────────────────────────────────────
   List<Map<String, dynamic>> _defauts = [];
@@ -10326,6 +10448,18 @@ class _SuiviPhotosTabState extends State<_SuiviPhotosTab> {
   void initState() {
     super.initState();
     _loadAll();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+      if (!mounted) return;
+      setState(() => _refreshing = true);
+      await _loadAll();
+      if (mounted) setState(() => _refreshing = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadAll() async {
@@ -11136,6 +11270,7 @@ class _SuiviPhotosTabState extends State<_SuiviPhotosTab> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (_refreshing) const LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
         // Header + sous-onglets
         Container(
           color: kCardBg,
@@ -13066,13 +13201,27 @@ class _Modele3DTabState extends State<_Modele3DTab> {
   Model3D? _model;
   bool _loading = true;
   bool _uploading = false;
+  bool _refreshing = false;
   WebViewController? _viewerCtrl;
   final Set<String> _highlighted = {};
+  Timer? _refreshTimer;
 
   @override
   void initState() {
     super.initState();
     _loadModel();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+      if (!mounted) return;
+      setState(() => _refreshing = true);
+      await _loadModel();
+      if (mounted) setState(() => _refreshing = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadModel() async {
@@ -13331,6 +13480,7 @@ window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camer
     if (_model != null && _viewerCtrl != null) {
       return Column(
         children: [
+          if (_refreshing) const LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
           // Toolbar
           Container(
             padding: EdgeInsets.symmetric(horizontal: pad, vertical: 12),
@@ -13487,6 +13637,7 @@ window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camer
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
+              if (_refreshing) const LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
               const SizedBox(height: 40),
               Container(
                 width: 80,
@@ -13737,6 +13888,8 @@ class _CommentairesTabState extends State<_CommentairesTab> {
   int _newClientCount = 0;
   final Set<String> _seenClientIds = {};
   RealtimeChannel? _channel;
+  Timer? _refreshTimer;
+  bool _refreshing = false;
 
   String? _attachedFileName;
   String? _attachedFileUrl;
@@ -13747,10 +13900,17 @@ class _CommentairesTabState extends State<_CommentairesTab> {
     super.initState();
     _load();
     _subscribeRealtime();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+      if (!mounted) return;
+      setState(() => _refreshing = true);
+      await _load();
+      if (mounted) setState(() => _refreshing = false);
+    });
   }
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
     _channel?.unsubscribe();
     _ctrl.dispose();
     _scroll.dispose();
@@ -13948,6 +14108,7 @@ class _CommentairesTabState extends State<_CommentairesTab> {
       padding: EdgeInsets.all(pad),
       child: Column(
         children: [
+          if (_refreshing) const LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
           // ── Stats header ────────────────────────────────────────────────────
           Container(
             margin: const EdgeInsets.only(bottom: 12),

@@ -1,9 +1,13 @@
+import 'dart:async';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:archi_manager/service/client_service.dart';
 import 'package:archi_manager/service/membre_service.dart';
 import 'package:archi_manager/models/client.dart';
 import 'package:archi_manager/models/membre.dart';
 import 'package:archi_manager/screens/projet_detail_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:lucide_icons/lucide_icons.dart';
@@ -27,7 +31,9 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
   String _sortBy = 'statut'; // 'statut' | 'nom' | 'avancement'
   List<Project> projets = [];
   bool isLoading = true;
+  bool _refreshing = false;
   RealtimeChannel? _realtimeChannel;
+  Timer? _refreshTimer;
 
   static const List<String> _statuts = ['En cours', 'Planification', 'Terminé'];
 
@@ -36,10 +42,14 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
     super.initState();
     loadProjets();
     _subscribeRealtime();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (mounted) loadProjets(silent: true);
+    });
   }
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
     _realtimeChannel?.unsubscribe();
     super.dispose();
   }
@@ -74,16 +84,14 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
       .subscribe();
   }
 
-  Future<void> loadProjets() async {
+  Future<void> loadProjets({bool silent = false}) async {
+    if (silent) setState(() => _refreshing = true);
     try {
       final data = await ProjetService.getProjets();
-      setState(() {
-        projets = data;
-        isLoading = false;
-      });
+      if (mounted) setState(() { projets = data; isLoading = false; _refreshing = false; });
     } catch (e) {
       debugPrint('Erreur projets: $e');
-      setState(() => isLoading = false);
+      if (mounted) setState(() { isLoading = false; _refreshing = false; });
     }
   }
 
@@ -308,10 +316,10 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
     }
 
     // ── Contrôleurs ────────────────────────────────────────────────────────
-    final titreCtrl = TextEditingController();
-    final descCtrl = TextEditingController();
+    final titreCtrl        = TextEditingController();
+    final descCtrl         = TextEditingController();
     final localisationCtrl = TextEditingController();
-    final budgetCtrl = TextEditingController();
+    final budgetCtrl       = TextEditingController();
 
     String statut = 'En cours';
     String? selectedClientId;
@@ -320,7 +328,8 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
     LatLng? selectedPosition;
     DateTime? pickedDebut;
     DateTime? pickedFin;
-    String? dateError;
+    String? _debutError;
+    String? _finError;
 
     if (!mounted) return;
 
@@ -440,8 +449,7 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
                                         ),
                                       )
                                       .toList(),
-                                  onChanged: (v) =>
-                                      sd(() => selectedClientId = v),
+                                  onChanged: (v) => sd(() => selectedClientId = v),
                                 ),
                               ),
                               const SizedBox(width: 12),
@@ -451,7 +459,22 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
                                   pickedPosition: selectedPosition,
                                   onPickMap: () async {
                                     final pos = await showMapLocationPicker(ctx, initial: selectedPosition);
-                                    if (pos != null) sd(() => selectedPosition = pos);
+                                    if (pos != null) {
+                                      sd(() => selectedPosition = pos);
+                                      try {
+                                        final uri = Uri.https(
+                                          'nominatim.openstreetmap.org', '/reverse',
+                                          {'lat': pos.latitude.toString(), 'lon': pos.longitude.toString(), 'format': 'json', 'accept-language': 'fr'},
+                                        );
+                                        final res = await http.get(uri, headers: {'User-Agent': 'ArchiManager/1.0'});
+                                        final data = jsonDecode(res.body) as Map<String, dynamic>;
+                                        final addr = data['address'] as Map<String, dynamic>? ?? {};
+                                        final city  = (addr['city'] ?? addr['town'] ?? addr['village'] ?? addr['county'] ?? '').toString();
+                                        final state = (addr['state'] ?? '').toString();
+                                        final loc = [city, state].where((s) => s.isNotEmpty).join(', ');
+                                        if (loc.isNotEmpty) sd(() => localisationCtrl.text = loc);
+                                      } catch (_) {}
+                                    }
                                   },
                                   onClearPosition: () => sd(() => selectedPosition = null),
                                 ),
@@ -502,16 +525,16 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
                                   icon: LucideIcons.calendarDays,
                                   label: 'DATE DÉBUT',
                                   value: pickedDebut,
-                                  hasError: dateError != null,
+                                  hasError: _debutError != null,
+                                  errorText: _debutError,
                                   onPicked: (d) => sd(() {
                                     pickedDebut = d;
-                                    if (pickedFin != null &&
-                                        !pickedFin!.isAfter(d)) {
+                                    _debutError = null;
+                                    if (pickedFin != null && !pickedFin!.isAfter(d)) {
                                       pickedFin = null;
-                                      dateError =
-                                          'La date de fin doit être postérieure à la date de début';
+                                      _finError = 'La date de fin doit être postérieure à la date de début';
                                     } else {
-                                      dateError = null;
+                                      _finError = null;
                                     }
                                   }),
                                 ),
@@ -523,14 +546,13 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
                                   label: 'DATE FIN',
                                   value: pickedFin,
                                   firstDate: pickedDebut != null
-                                      ? pickedDebut!
-                                          .add(const Duration(days: 1))
+                                      ? pickedDebut!.add(const Duration(days: 1))
                                       : null,
-                                  hasError: dateError != null,
+                                  hasError: _finError != null,
+                                  errorText: _finError,
                                   onPicked: (d) => sd(() {
                                     pickedFin = d;
-                                    dateError = (pickedDebut != null &&
-                                            !d.isAfter(pickedDebut!))
+                                    _finError = (pickedDebut != null && !d.isAfter(pickedDebut!))
                                         ? 'La date de fin doit être postérieure à la date de début'
                                         : null;
                                   }),
@@ -538,23 +560,6 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
                               ),
                             ],
                           ),
-                          if (dateError != null) ...[
-                            const SizedBox(height: 6),
-                            Row(
-                              children: [
-                                const Icon(Icons.error_outline,
-                                    size: 13, color: kRed),
-                                const SizedBox(width: 4),
-                                Flexible(
-                                  child: Text(
-                                    dateError!,
-                                    style: const TextStyle(
-                                        fontSize: 11, color: kRed),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
                           const SizedBox(height: 14),
 
                           // Statut selector
@@ -735,16 +740,16 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
                                         );
                                         return;
                                       }
-                                      if (pickedDebut != null &&
-                                          pickedFin != null &&
-                                          !pickedFin!.isAfter(pickedDebut!)) {
-                                        sd(() => dateError =
-                                            'La date de fin doit être postérieure à la date de début');
-                                        _showSnack(
-                                          ctx,
-                                          'La date de fin doit être postérieure à la date de début',
-                                          kRed,
-                                        );
+                                      if (pickedDebut == null) {
+                                        sd(() => _debutError = 'Date de début obligatoire');
+                                        return;
+                                      }
+                                      if (pickedFin == null) {
+                                        sd(() => _finError = 'Date de fin obligatoire');
+                                        return;
+                                      }
+                                      if (!pickedFin!.isAfter(pickedDebut!)) {
+                                        sd(() => _finError = 'La date de fin doit être postérieure à la date de début');
                                         return;
                                       }
 
@@ -857,13 +862,15 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
       return const Center(child: CircularProgressIndicator(color: kAccent));
     }
 
-    return Container(
-      color: kBg,
-      child: SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(pad, pad, pad, pad + 20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+    return Stack(
+      children: [
+        Container(
+          color: kBg,
+          child: SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(pad, pad, pad, pad + 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
             // ── Header ───────────────────────────────────────────────────
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1052,9 +1059,15 @@ class _ProjetsScreenState extends State<ProjetsScreen> {
                   );
                 },
               ),
-          ],
+              ],
+            ),
+          ),
         ),
-      ),
+        if (_refreshing) const Positioned(
+          top: 0, left: 0, right: 0,
+          child: LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
+        ),
+      ],
     );
   }
 
@@ -1299,6 +1312,9 @@ class _ProjetField extends StatelessWidget {
   final TextEditingController controller;
   final TextInputType keyboardType;
   final int maxLines;
+  final List<TextInputFormatter>? inputFormatters;
+  final String? errorText;
+  final ValueChanged<String>? onChanged;
 
   const _ProjetField({
     required this.icon,
@@ -1307,6 +1323,9 @@ class _ProjetField extends StatelessWidget {
     required this.controller,
     this.keyboardType = TextInputType.text,
     this.maxLines = 1,
+    this.inputFormatters,
+    this.errorText,
+    this.onChanged,
   });
 
   @override
@@ -1327,12 +1346,15 @@ class _ProjetField extends StatelessWidget {
         controller: controller,
         keyboardType: keyboardType,
         maxLines: maxLines,
+        inputFormatters: inputFormatters,
+        onChanged: onChanged,
         style: const TextStyle(fontSize: 13, color: kTextMain),
         decoration: InputDecoration(
           hintText: hint,
           hintStyle: const TextStyle(color: kTextSub),
+          errorText: errorText,
           prefixIcon: maxLines == 1
-              ? Icon(icon, size: 14, color: kTextSub)
+              ? Icon(icon, size: 14, color: errorText != null ? kRed : kTextSub)
               : null,
           isDense: true,
           contentPadding: EdgeInsets.symmetric(
@@ -1347,12 +1369,18 @@ class _ProjetField extends StatelessWidget {
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+            borderSide: BorderSide(
+              color: errorText != null ? kRed : const Color(0xFFE5E7EB),
+            ),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(color: kAccent, width: 2),
+            borderSide: BorderSide(
+              color: errorText != null ? kRed : kAccent,
+              width: 2,
+            ),
           ),
+          errorStyle: const TextStyle(fontSize: 11, color: kRed),
         ),
       ),
     ],
@@ -1373,6 +1401,7 @@ class _DatePickerField extends StatelessWidget {
   final ValueChanged<DateTime> onPicked;
   final DateTime? firstDate;
   final bool hasError;
+  final String? errorText;
 
   const _DatePickerField({
     required this.icon,
@@ -1381,6 +1410,7 @@ class _DatePickerField extends StatelessWidget {
     required this.onPicked,
     this.firstDate,
     this.hasError = false,
+    this.errorText,
   });
 
   String _display() {
@@ -1404,10 +1434,11 @@ class _DatePickerField extends StatelessWidget {
       const SizedBox(height: 6),
       GestureDetector(
         onTap: () async {
+          final today = DateTime.now();
           final minDate = firstDate ?? DateTime(2000);
-          final initDate = (value != null && !value!.isBefore(minDate))
+          final initDate = value != null && !value!.isBefore(minDate)
               ? value!
-              : minDate;
+              : (today.isBefore(minDate) ? minDate : today);
           final picked = await showDatePicker(
             context: context,
             initialDate: initDate,
@@ -1432,12 +1463,20 @@ class _DatePickerField extends StatelessWidget {
             Expanded(
               child: Text(
                 _display(),
-                style: TextStyle(fontSize: 13, color: value == null ? kTextSub : kTextMain),
+                style: TextStyle(fontSize: 13, color: value == null ? (hasError ? kRed : kTextSub) : kTextMain),
               ),
             ),
           ]),
         ),
       ),
+      if (errorText != null) ...[
+        const SizedBox(height: 4),
+        Row(children: [
+          const Icon(Icons.error_outline, size: 12, color: kRed),
+          const SizedBox(width: 3),
+          Flexible(child: Text(errorText!, style: const TextStyle(fontSize: 11, color: kRed))),
+        ]),
+      ],
     ],
   );
 }

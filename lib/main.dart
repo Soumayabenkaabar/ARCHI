@@ -1,10 +1,13 @@
+import 'dart:async';
 import 'package:archi_manager/core/supabase_config.dart';
 import 'package:archi_manager/screens/parametres_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'constants/colors.dart';
 import 'models/nav_item.dart';
+import 'models/notification.dart';
 import 'models/project.dart';
 import 'service/notification_service.dart';
 import 'screens/analytics_screen.dart';
@@ -76,11 +79,100 @@ class _AppShellState extends State<_AppShell> {
   int _notifCount    = 0;
   Project? _detailProject;
   int _initialTab    = 0;
+  Timer? _notifTimer;
+  RealtimeChannel? _commentairesChannel;
+  RealtimeChannel? _notifsChannel;
+  final StreamController<void> _notifRefreshCtrl = StreamController<void>.broadcast();
 
   @override
   void initState() {
     super.initState();
     _runChecksAndRefresh();
+    _subscribeRealtime();
+    _notifTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (mounted) _refreshNotifCount();
+    });
+  }
+
+  @override
+  void dispose() {
+    _notifTimer?.cancel();
+    _commentairesChannel?.unsubscribe();
+    _notifsChannel?.unsubscribe();
+    _notifRefreshCtrl.close();
+    super.dispose();
+  }
+
+  void _subscribeRealtime() {
+    // Quand un client ajoute un commentaire → notification créée directement (sans checkAll)
+    _commentairesChannel = Supabase.instance.client
+        .channel('shell-commentaires-client')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'commentaires',
+          callback: (payload) async {
+            final role = payload.newRecord['role'] as String? ?? '';
+            if (role != 'client' || !mounted) return;
+            await _notifyFromClientComment(payload.newRecord);
+          },
+        )
+        .subscribe();
+
+    // Quand une notification est créée/modifiée → mettre à jour le badge immédiatement
+    final uid = AuthService.currentUser?.id;
+    if (uid != null) {
+      _notifsChannel = Supabase.instance.client
+          .channel('shell-notifications-$uid')
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: 'public',
+            table: 'notifications',
+            filter: PostgresChangeFilter(
+              type: PostgresChangeFilterType.eq,
+              column: 'user_id',
+              value: uid,
+            ),
+            callback: (_) {
+              if (mounted) _refreshNotifCount();
+            },
+          )
+          .subscribe();
+    }
+  }
+
+  Future<void> _notifyFromClientComment(Map<String, dynamic> record) async {
+    try {
+      final projetId  = record['projet_id']?.toString() ?? '';
+      final auteur    = record['auteur']    as String? ?? 'Client';
+      final contenu   = record['contenu']   as String? ?? '';
+      final createdAt = record['created_at'] as String? ?? '';
+      if (projetId.isEmpty || contenu.isEmpty) return;
+
+      final row = await Supabase.instance.client
+          .from('projets')
+          .select('titre')
+          .eq('id', projetId)
+          .single();
+      final titre = row['titre'] as String? ?? '';
+      if (titre.isEmpty) return;
+
+      final dt = DateTime.tryParse(createdAt)?.toLocal();
+      final dateLabel = dt != null
+          ? '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')} à ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}'
+          : '';
+      final preview = contenu.length > 80 ? '${contenu.substring(0, 80)}…' : contenu;
+
+      await NotificationService.add(
+        message: '$auteur ($dateLabel) : $preview',
+        projet: titre,
+        type: NotifType.commentaire,
+      );
+      if (mounted) {
+        _refreshNotifCount();
+        _notifRefreshCtrl.add(null); // signal instantané → notifications screen reload
+      }
+    } catch (_) {}
   }
 
   Future<void> _runChecksAndRefresh() async {
@@ -121,6 +213,7 @@ class _AppShellState extends State<_AppShell> {
       case 4:  return const AnalyticsScreen();
       case 5:  return const CarteScreen();
       case 6:  return NotificationsScreen(
+        refreshStream: _notifRefreshCtrl.stream,
         onNotifChanged: () async {
           await NotificationChecker.checkAll();
           _refreshNotifCount();

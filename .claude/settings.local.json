@@ -10,7 +10,9 @@
       "Bash(Select-Object Name, FullName)",
       "Bash(dart pub *)",
       "Bash(flutter build *)",
-      "Bash(Get-ChildItem *)"
+      "Bash(Get-ChildItem *)",
+      "Bash(cd /d \"D:\\\\0000\\\\archu\\\\FRONT-END-main\")",
+      "Bash(findstr /n \"class _TachesTabState\" lib\\\\screens\\\\projet_detail_screen.dart)"
     ]
   }
 }

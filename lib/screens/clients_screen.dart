@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'package:archi_manager/service/client_service.dart';
 import '../models/client.dart' show ClientStats;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../constants/colors.dart';
 import '../models/client.dart';
 import '../widgets/client_card.dart';
@@ -20,15 +22,49 @@ class _ClientsScreenState extends State<ClientsScreen> {
   List<Client> clients = [];
   Map<String, ClientStats> _projectStats = {};
   bool isLoading = true;
+  bool _refreshing = false;
   String searchQuery = '';
+  Timer? _refreshTimer;
+  RealtimeChannel? _realtimeChannel;
 
   @override
   void initState() {
     super.initState();
     loadClients();
+    _subscribeRealtime();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (mounted) loadClients(silent: true);
+    });
   }
 
-  Future<void> loadClients() async {
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    _realtimeChannel?.unsubscribe();
+    searchController.dispose();
+    super.dispose();
+  }
+
+  void _subscribeRealtime() {
+    _realtimeChannel = Supabase.instance.client
+        .channel('clients-realtime')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'clients',
+          callback: (_) { if (mounted) loadClients(silent: true); },
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'projets',
+          callback: (_) { if (mounted) loadClients(silent: true); },
+        )
+        .subscribe();
+  }
+
+  Future<void> loadClients({bool silent = false}) async {
+    if (silent) setState(() => _refreshing = true);
     try {
       final results = await Future.wait([
         ClientService.getClients(),
@@ -39,9 +75,11 @@ class _ClientsScreenState extends State<ClientsScreen> {
         clients       = results[0] as List<Client>;
         _projectStats = results[1] as Map<String, ClientStats>;
         isLoading     = false;
+        _refreshing   = false;
       });
     } catch (e) {
       debugPrint('Erreur chargement clients: $e');
+      if (mounted) setState(() => _refreshing = false);
     }
   }
 
@@ -718,11 +756,13 @@ class _ClientsScreenState extends State<ClientsScreen> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    return Container(
-      color: kBg,
-      child: RefreshIndicator(
-        onRefresh: loadClients,
-        child: SingleChildScrollView(
+    return Stack(
+      children: [
+        Container(
+          color: kBg,
+          child: RefreshIndicator(
+            onRefresh: loadClients,
+            child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           padding: EdgeInsets.fromLTRB(pad, pad, pad, pad + 20),
           child: Column(
@@ -855,10 +895,15 @@ class _ClientsScreenState extends State<ClientsScreen> {
                     return Column(children: rows);
                   },
                 ),
-            ],
+              ],
+            ),
           ),
+        ),),
+        if (_refreshing) const Positioned(
+          top: 0, left: 0, right: 0,
+          child: LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
         ),
-      ),
+      ],
     );
   }
 }

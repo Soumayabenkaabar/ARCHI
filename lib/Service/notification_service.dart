@@ -31,6 +31,17 @@ class NotificationService {
     await _db.from('notifications').update({'lue': true}).eq('id', id);
   }
 
+  static Future<void> markCommentairesAsRead(String projet) async {
+    if (_uid == null) return;
+    await _db
+        .from('notifications')
+        .update({'lue': true})
+        .eq('user_id', _uid!)
+        .eq('projet', projet)
+        .eq('type', 'commentaire')
+        .eq('lue', false);
+  }
+
   static Future<void> markAllAsRead() async {
     if (_uid == null) return;
     await _db.from('notifications')

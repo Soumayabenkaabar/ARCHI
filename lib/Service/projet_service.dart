@@ -113,7 +113,14 @@ class ProjetService {
 
   // ✏️ UPDATE
   static Future<void> updateProjet(Project projet) async {
-    await _db.from('projets').update(projet.toJson()).eq('id', projet.id);
+    if (projet.id.isEmpty) throw Exception('ID projet invalide');
+    final uid = AuthService.currentUser?.id;
+    var query = _db.from('projets').update(projet.toJson()).eq('id', projet.id);
+    if (uid != null) query = query.eq('user_id', uid);
+    final rows = await query.select('id');
+    if ((rows as List).isEmpty) {
+      throw Exception('Modification non sauvegardée (accès refusé)');
+    }
   }
 
   // 💰 UPDATE budget_depense automatiquement depuis les factures
@@ -130,7 +137,13 @@ class ProjetService {
 
   // 🔄 UPDATE portail_client
   static Future<void> updatePortailClient(String id, bool value) async {
-    await _db.from('projets').update({'portail_client': value}).eq('id', id);
+    final uid = AuthService.currentUser?.id;
+    var query = _db.from('projets').update({'portail_client': value}).eq('id', id);
+    if (uid != null) query = query.eq('user_id', uid);
+    final rows = await query.select('id');
+    if ((rows as List).isEmpty) {
+      throw Exception('Portail non sauvegardé (accès refusé ou ID invalide)');
+    }
   }
 
   // 📊 UPDATE avancement calculé depuis les tâches

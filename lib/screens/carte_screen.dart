@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -68,6 +69,8 @@ class _CarteScreenState extends State<CarteScreen> {
   int?   _selectedIndex;
   LatLng? _myPosition;
   bool   _loadingPosition  = false;
+  bool   _refreshing       = false;
+  Timer? _refreshTimer;
 
   static const _defaultCenter = LatLng(33.8, 10.85); // Tunisie par défaut
 
@@ -75,10 +78,23 @@ class _CarteScreenState extends State<CarteScreen> {
   void initState() {
     super.initState();
     _load();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (mounted) _load(silent: true);
+    });
   }
 
-  Future<void> _load() async {
-    setState(() { _loading = true; _selectedIndex = null; });
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _load({bool silent = false}) async {
+    if (silent) {
+      setState(() => _refreshing = true);
+    } else {
+      setState(() { _loading = true; _selectedIndex = null; });
+    }
     try {
       final projects = await ProjetService.getProjets();
       final futures = projects.map((p) async {
@@ -94,18 +110,19 @@ class _CarteScreenState extends State<CarteScreen> {
       final geocoded = results.whereType<_ChantierGeo>().toList();
 
       setState(() {
-        _projects = projects;
-        _geocoded = geocoded;
-        _loading  = false;
+        _projects   = projects;
+        _geocoded   = geocoded;
+        _loading    = false;
+        _refreshing = false;
       });
 
-      if (geocoded.isNotEmpty) {
+      if (geocoded.isNotEmpty && !silent) {
         final avgLat = geocoded.map((c) => c.position.latitude).reduce((a, b) => a + b) / geocoded.length;
         final avgLng = geocoded.map((c) => c.position.longitude).reduce((a, b) => a + b) / geocoded.length;
         _mapController.move(LatLng(avgLat, avgLng), geocoded.length == 1 ? 12.0 : 8.0);
       }
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() { _loading = false; _refreshing = false; });
     }
   }
 
@@ -167,11 +184,13 @@ class _CarteScreenState extends State<CarteScreen> {
     final nbTermine = _projects.where((p) => p.statut == 'termine').length;
     final nbAttente = _projects.where((p) => p.statut == 'en_attente').length;
 
-    return Container(
-      color: kBg,
-      child: SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(pad, pad, pad, pad + 20),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    return Stack(
+      children: [
+        Container(
+          color: kBg,
+          child: SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(pad, pad, pad, pad + 20),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
 
           // ── Header ────────────────────────────────────────────────────────
           Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
@@ -426,8 +445,14 @@ Wrap(spacing: 20, runSpacing: 8, children: [
               }
               return Column(children: rows);
             }),
-        ]),
-      ),
+            ]),
+          ),
+        ),
+        if (_refreshing) const Positioned(
+          top: 0, left: 0, right: 0,
+          child: LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
+        ),
+      ],
     );
   }
 }

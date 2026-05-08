@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:archi_manager/models/project.dart';
 import 'package:archi_manager/screens/projet_detail_screen.dart';
 import 'package:archi_manager/screens/projets_screen.dart';
@@ -100,38 +101,75 @@ class _DashboardScreenState extends State<DashboardScreen> {
   DashboardStats? _stats;
   List<AppNotification> _notifications = [];
   List<ProjetResume> _projets = [];
+  Timer? _refreshTimer;
+  bool _refreshing = false;
+  RealtimeChannel? _realtimeChannel;
 
   @override
   void initState() {
     super.initState();
     _loadAll();
+    _subscribeRealtime();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (mounted) _loadAll(silent: true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    _realtimeChannel?.unsubscribe();
+    super.dispose();
+  }
+
+  void _subscribeRealtime() {
+    _realtimeChannel = Supabase.instance.client
+        .channel('dashboard-realtime')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'projets',
+          callback: (_) { if (mounted) _loadAll(silent: true); },
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'taches',
+          callback: (_) { if (mounted) _loadAll(silent: true); },
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'notifications',
+          callback: (_) { if (mounted) _loadAll(silent: true); },
+        )
+        .subscribe();
   }
 
   // ── Data Fetching ────────────────────────────────────────────────────────────
 
-  Future<void> _loadAll({int retry = 0}) async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future<void> _loadAll({int retry = 0, bool silent = false}) async {
+    if (silent) {
+      setState(() => _refreshing = true);
+    } else {
+      setState(() { _loading = true; _error = null; });
+    }
     try {
       final user = _supabase.auth.currentUser;
-      // Si pas encore authentifié, on réessaie une fois après 800ms
       if (user == null && retry == 0) {
         await Future.delayed(const Duration(milliseconds: 800));
-        return _loadAll(retry: 1);
+        return _loadAll(retry: 1, silent: silent);
       }
       final userId = user?.id;
-
       await Future.wait([
         _fetchStats(userId),
         _fetchProjetsEnCours(userId),
       ]);
     } catch (e) {
       debugPrint('ERREUR dashboard: $e');
-      setState(() => _error = e.toString());
+      if (!silent) setState(() => _error = e.toString());
     } finally {
-      setState(() => _loading = false);
+      if (mounted) setState(() { _loading = false; _refreshing = false; });
     }
   }
 
@@ -264,18 +302,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
       color: kBg,
       child: _loading
           ? const Center(child: CircularProgressIndicator(color: kAccent))
-          : _error != null
-              ? _ErrorView(message: _error!, onRetry: _loadAll)
-              : RefreshIndicator(
-                  onRefresh: _loadAll,
-                  color: kAccent,
-                  child: SingleChildScrollView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: EdgeInsets.fromLTRB(pad, pad, pad, pad + 20),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildHeader(isMobile),
+        : _error != null
+            ? _ErrorView(message: _error!, onRetry: _loadAll)
+            : RefreshIndicator(
+                onRefresh: _loadAll,
+                color: kAccent,
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: EdgeInsets.fromLTRB(pad, pad, pad, pad + 20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (_refreshing) const LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
+                      _buildHeader(isMobile),
                         SizedBox(height: isMobile ? 20 : 28),
                         _buildKpiGrid(isMobile),
                         SizedBox(height: isMobile ? 20 : 28),
@@ -294,11 +333,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           ),
                           SizedBox(height: isMobile ? 16 : 20),
                         ],
-                        _buildProjetsSection(isMobile),
-                      ],
-                    ),
+                      _buildProjetsSection(isMobile),
+                    ],
                   ),
                 ),
+              ),
     );
   }
 
