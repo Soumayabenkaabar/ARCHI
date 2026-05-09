@@ -10,6 +10,7 @@ import 'models/nav_item.dart';
 import 'models/notification.dart';
 import 'models/project.dart';
 import 'service/notification_service.dart';
+import 'screens/ai_screen.dart';
 import 'screens/analytics_screen.dart';
 import 'screens/carte_screen.dart';
 import 'screens/clients_screen.dart';
@@ -211,8 +212,9 @@ class _AppShellState extends State<_AppShell> {
       case 2:  return const ClientsScreen();
       case 3:  return const EquipeScreen();
       case 4:  return const AnalyticsScreen();
-      case 5:  return const CarteScreen();
-      case 6:  return NotificationsScreen(
+      case 5:  return const AiScreen();
+      case 6:  return const CarteScreen();
+      case 7:  return NotificationsScreen(
         refreshStream: _notifRefreshCtrl.stream,
         onNotifChanged: () async {
           await NotificationChecker.checkAll();
@@ -220,7 +222,7 @@ class _AppShellState extends State<_AppShell> {
         },
         onNavigate: _navigateFromNotif,
       );
-      case 7:  return const ParametresScreen();
+      case 8:  return const ParametresScreen();
       default: return _PlaceholderScreen(label: navItems[index].label);
     }
   }

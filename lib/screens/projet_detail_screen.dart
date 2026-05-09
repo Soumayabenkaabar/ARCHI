@@ -24,6 +24,7 @@ import '../service/document_service.dart';
 import '../service/facture_service.dart';
 import '../service/commentaire_service.dart';
 import '../service/project_member_service.dart';
+import '../service/ai_service.dart';
 import '../service/projet_service.dart';
 import '../service/membre_service.dart';
 import '../service/auth_service.dart';
@@ -746,6 +747,21 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
       default:
         return const Color(0xFF9CA3AF);
     }
+  }
+
+  // ── IA Actions ────────────────────────────────────────────────────────────────
+  void _showRapportIa() {
+    showDialog(
+      context: context,
+      builder: (ctx) => _RapportDialog(project: _project),
+    );
+  }
+
+  void _showPredictionsIa() {
+    showDialog(
+      context: context,
+      builder: (ctx) => _PredictionsDialog(project: _project),
+    );
   }
 
   Future<void> _terminerProjet() async {
@@ -1657,6 +1673,29 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
         color: Colors.transparent,
         child: Row(
           children: [
+            // IA buttons
+            OutlinedButton.icon(
+              onPressed: _showRapportIa,
+              icon: const Icon(LucideIcons.fileText, size: 13, color: Color(0xFF8B5CF6)),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Color(0xFF8B5CF6)),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              label: const Text('Rapport', style: TextStyle(color: Color(0xFF8B5CF6), fontSize: 12, fontWeight: FontWeight.w600)),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              onPressed: _showPredictionsIa,
+              icon: const Icon(LucideIcons.sparkles, size: 13, color: Color(0xFF6366F1)),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Color(0xFF6366F1)),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              label: const Text('Prédire', style: TextStyle(color: Color(0xFF6366F1), fontSize: 12, fontWeight: FontWeight.w600)),
+            ),
+            const SizedBox(width: 10),
             _AccessToggle(
               value: _project.portailClient,
               onChanged:
@@ -1768,8 +1807,28 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
             _terminerProjet();
           else if (v == 'annuler')
             _annulerProjet();
+          else if (v == 'rapport')
+            _showRapportIa();
+          else if (v == 'predire')
+            _showPredictionsIa();
         },
         itemBuilder: (_) => [
+          const PopupMenuItem(
+            value: 'rapport',
+            child: Row(children: [
+              Icon(LucideIcons.fileText, size: 14, color: Color(0xFF8B5CF6)),
+              SizedBox(width: 8),
+              Text('Rapport IA', style: TextStyle(color: Color(0xFF8B5CF6))),
+            ]),
+          ),
+          const PopupMenuItem(
+            value: 'predire',
+            child: Row(children: [
+              Icon(LucideIcons.sparkles, size: 14, color: Color(0xFF6366F1)),
+              SizedBox(width: 8),
+              Text('Prédire IA', style: TextStyle(color: Color(0xFF6366F1))),
+            ]),
+          ),
           if (_project.statut != 'termine')
             const PopupMenuItem(
               value: 'terminer',
@@ -15186,6 +15245,286 @@ class _DField extends StatelessWidget {
           ),
         ),
       ),
+    ],
+  );
+}
+
+// ── IA Rapport dialog ─────────────────────────────────────────────────────────
+
+class _RapportDialog extends StatefulWidget {
+  final Project project;
+  const _RapportDialog({required this.project});
+  @override
+  State<_RapportDialog> createState() => _RapportDialogState();
+}
+
+class _RapportDialogState extends State<_RapportDialog> {
+  String? _rapport;
+  String? _error;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _generate();
+  }
+
+  Future<void> _generate() async {
+    try {
+      final res = await AiService.genererRapport(widget.project);
+      if (mounted) setState(() { _rapport = res; _loading = false; });
+    } catch (e) {
+      if (mounted) setState(() { _error = e.toString(); _loading = false; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: 600,
+          maxHeight: MediaQuery.of(context).size.height * 0.85,
+        ),
+        child: Column(
+          children: [
+            // Header
+            Container(
+              padding: const EdgeInsets.fromLTRB(20, 18, 16, 14),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(colors: [Color(0xFF8B5CF6), Color(0xFF6366F1)]),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(LucideIcons.fileText, color: Colors.white, size: 18),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Rapport — ${widget.project.titre}',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  InkWell(
+                    onTap: () => Navigator.pop(context),
+                    borderRadius: BorderRadius.circular(8),
+                    child: const Padding(
+                      padding: EdgeInsets.all(4),
+                      child: Icon(LucideIcons.x, color: Colors.white70, size: 16),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Body
+            Expanded(
+              child: _loading
+                  ? const Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      CircularProgressIndicator(color: Color(0xFF8B5CF6)),
+                      SizedBox(height: 14),
+                      Text('Génération du rapport…', style: TextStyle(color: Color(0xFF6B7280))),
+                    ]))
+                  : _error != null
+                      ? Padding(
+                          padding: const EdgeInsets.all(20),
+                          child: Text(_error!, style: const TextStyle(color: Color(0xFFEF4444))),
+                        )
+                      : SingleChildScrollView(
+                          padding: const EdgeInsets.all(20),
+                          child: SelectableText(
+                            _rapport ?? '',
+                            style: const TextStyle(fontSize: 13, height: 1.7, color: Color(0xFF374151)),
+                          ),
+                        ),
+            ),
+            // Footer
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF8B5CF6),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                  ),
+                  child: const Text('Fermer', style: TextStyle(fontWeight: FontWeight.w600)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── IA Prédictions dialog ─────────────────────────────────────────────────────
+
+class _PredictionsDialog extends StatefulWidget {
+  final Project project;
+  const _PredictionsDialog({required this.project});
+  @override
+  State<_PredictionsDialog> createState() => _PredictionsDialogState();
+}
+
+class _PredictionsDialogState extends State<_PredictionsDialog> {
+  Map<String, String>? _preds;
+  String? _error;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _predict();
+  }
+
+  Future<void> _predict() async {
+    try {
+      final res = await AiService.predireProjet(widget.project);
+      if (mounted) setState(() { _preds = res; _loading = false; });
+    } catch (e) {
+      if (mounted) setState(() { _error = e.toString(); _loading = false; });
+    }
+  }
+
+  Color _riskColor(String risk) {
+    if (risk.contains('Élevé')) return const Color(0xFFEF4444);
+    if (risk.contains('Moyen')) return const Color(0xFFF59E0B);
+    return const Color(0xFF10B981);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = widget.project;
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header
+            Container(
+              padding: const EdgeInsets.fromLTRB(20, 18, 16, 14),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)]),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(LucideIcons.sparkles, color: Colors.white, size: 18),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Prédictions — ${p.titre}',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  InkWell(
+                    onTap: () => Navigator.pop(context),
+                    borderRadius: BorderRadius.circular(8),
+                    child: const Padding(
+                      padding: EdgeInsets.all(4),
+                      child: Icon(LucideIcons.x, color: Colors.white70, size: 16),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Body
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
+                child: _loading
+                    ? const Center(child: Padding(
+                        padding: EdgeInsets.symmetric(vertical: 32),
+                        child: Column(mainAxisSize: MainAxisSize.min, children: [
+                          CircularProgressIndicator(color: Color(0xFF6366F1)),
+                          SizedBox(height: 14),
+                          Text('Calcul des prédictions…', style: TextStyle(color: Color(0xFF6B7280))),
+                        ]),
+                      ))
+                    : _error != null
+                        ? Text(_error!, style: const TextStyle(color: Color(0xFFEF4444), fontSize: 13))
+                        : Column(
+                            children: [
+                              _PredRow(label: 'Budget final estimé', value: _preds!['budget_final_estime'] ?? '—'),
+                              const SizedBox(height: 12),
+                              _PredRow(label: 'Date de fin estimée', value: _preds!['date_fin_estimee'] ?? '—'),
+                              const SizedBox(height: 12),
+                              _PredRow(
+                                label: 'Niveau de risque',
+                                value: _preds!['niveau_risque'] ?? '—',
+                                valueColor: _riskColor(_preds!['niveau_risque'] ?? ''),
+                              ),
+                              const SizedBox(height: 12),
+                              _PredRow(label: 'Probabilité respect budget', value: _preds!['probabilite_respect_budget'] ?? '—'),
+                              if ((_preds!['justification'] ?? '').isNotEmpty) ...[
+                                const SizedBox(height: 16),
+                                Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF5F3FF),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Text(
+                                    _preds!['justification']!,
+                                    style: const TextStyle(fontSize: 13, color: Color(0xFF374151), height: 1.5),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+              ),
+            ),
+            // Footer
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF6366F1),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                  ),
+                  child: const Text('Fermer', style: TextStyle(fontWeight: FontWeight.w600)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PredRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color? valueColor;
+  const _PredRow({required this.label, required this.value, this.valueColor});
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Expanded(child: Text(label, style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280)))),
+      const SizedBox(width: 12),
+      Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: valueColor ?? kTextMain)),
     ],
   );
 }

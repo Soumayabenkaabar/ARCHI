@@ -14,10 +14,11 @@ final List<NavItem> navItems = [
   const NavItem(LucideIcons.user, 'Client'),
   const NavItem(LucideIcons.users, 'Équipe'),
   const NavItem(LucideIcons.barChart3, 'Analytics'),
+  const NavItem(LucideIcons.sparkles, 'IA Assistant'),
   const NavItem(LucideIcons.mapPin, 'Carte'),
   const NavItem(LucideIcons.bell, 'Notifications'),
   const NavItem(LucideIcons.settings, 'Paramètres'),
 ];
 
 // Index de l'item Notifications dans navItems
-const int kNotifNavIndex = 6;
+const int kNotifNavIndex = 7;

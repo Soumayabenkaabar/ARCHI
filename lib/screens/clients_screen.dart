@@ -7,6 +7,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../constants/colors.dart';
 import '../models/client.dart';
+import 'ai_screen.dart';
 import '../widgets/client_card.dart';
 
 class ClientsScreen extends StatefulWidget {
@@ -600,33 +601,57 @@ class _ClientsScreenState extends State<ClientsScreen> {
                   decoration: const BoxDecoration(
                     border: Border(top: BorderSide(color: Color(0xFFE5E7EB))),
                   ),
-                  child: Row(
+                  child: Column(
                     children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () => Navigator.pop(dialogContext),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 11),
-                            side: const BorderSide(color: Color(0xFFD1D5DB)),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8)),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () => Navigator.pop(dialogContext),
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 11),
+                                side: const BorderSide(color: Color(0xFFD1D5DB)),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8)),
+                              ),
+                              child: const Text('Fermer', style: TextStyle(color: kTextSub)),
+                            ),
                           ),
-                          child: const Text('Fermer', style: TextStyle(color: kTextSub)),
-                        ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: () {
+                                Navigator.pop(dialogContext);
+                                showAddClientDialog(clientToEdit: client);
+                              },
+                              icon: const Icon(LucideIcons.pencil, size: 14, color: Colors.white),
+                              label: const Text('Modifier',
+                                  style: TextStyle(
+                                      color: Colors.white, fontWeight: FontWeight.w600)),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: kWarning,
+                                elevation: 0,
+                                padding: const EdgeInsets.symmetric(vertical: 11),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8)),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        width: double.infinity,
                         child: ElevatedButton.icon(
                           onPressed: () {
                             Navigator.pop(dialogContext);
-                            showAddClientDialog(clientToEdit: client);
+                            showDevisIaDialog(context, clientNom: client.nom);
                           },
-                          icon: const Icon(LucideIcons.pencil, size: 14, color: Colors.white),
-                          label: const Text('Modifier',
-                              style: TextStyle(
-                                  color: Colors.white, fontWeight: FontWeight.w600)),
+                          icon: const Icon(LucideIcons.sparkles, size: 14, color: Colors.white),
+                          label: const Text('Générer devis IA',
+                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: kWarning,
+                            backgroundColor: const Color(0xFF8B5CF6),
                             elevation: 0,
                             padding: const EdgeInsets.symmetric(vertical: 11),
                             shape: RoundedRectangleBorder(
