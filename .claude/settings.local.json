@@ -16,7 +16,9 @@
       "PowerShell($lines = \\(Get-Content \"D:\\\\0000\\\\archu\\\\FRONT-END-main\\\\lib\\\\screens\\\\projet_detail_screen.dart\" | Measure-Object -Line\\).Lines; Write-Output \"Total lines: $lines\")",
       "PowerShell($content = Get-Content \"D:\\\\0000\\\\archu\\\\FRONT-END-main\\\\lib\\\\screens\\\\projet_detail_screen.dart\"; $total = $content.Count; Write-Output \"Total: $total\"; $content[\\($total-5\\)..\\($total-1\\)])",
       "PowerShell(supabase *)",
-      "Bash(Select-Object Name, PSIsContainer)"
+      "Bash(Select-Object Name, PSIsContainer)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(Sort-Object)"
     ]
   }
 }

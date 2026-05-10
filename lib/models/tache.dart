@@ -65,6 +65,7 @@ class Tache {
     switch (statut) {
       case 'en_cours': return 'En cours';
       case 'termine':  return 'Terminé';
+      case 'retard':   return 'En retard';
       default:         return 'Pas commencé';
     }
   }
