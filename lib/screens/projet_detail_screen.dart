@@ -750,12 +750,6 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
   }
 
   // ── IA Actions ────────────────────────────────────────────────────────────────
-  void _showRapportIa() {
-    showDialog(
-      context: context,
-      builder: (ctx) => _RapportDialog(project: _project),
-    );
-  }
 
   void _showPredictionsIa() {
     showDialog(
@@ -1675,17 +1669,6 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
           children: [
             // IA buttons
             OutlinedButton.icon(
-              onPressed: _showRapportIa,
-              icon: const Icon(LucideIcons.fileText, size: 13, color: Color(0xFF8B5CF6)),
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: Color(0xFF8B5CF6)),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-              label: const Text('Rapport', style: TextStyle(color: Color(0xFF8B5CF6), fontSize: 12, fontWeight: FontWeight.w600)),
-            ),
-            const SizedBox(width: 8),
-            OutlinedButton.icon(
               onPressed: _showPredictionsIa,
               icon: const Icon(LucideIcons.sparkles, size: 13, color: Color(0xFF6366F1)),
               style: OutlinedButton.styleFrom(
@@ -1769,92 +1752,112 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
     ],
   );
 
-  Widget _buildMobileHeader(Project p) => Row(
+  Widget _buildMobileHeader(Project p) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Expanded(
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                p.titre,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w800,
-                  color: kTextMain,
+      // ── Ligne 1 : Titre + Statut ──────────────────────────────────────
+      Row(
+        children: [
+          Expanded(
+            child: Text(
+              p.titre,
+              style: const TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+                color: kTextMain,
+                height: 1.2,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          _StatusBadge(label: p.status, color: _statusColor),
+        ],
+      ),
+      const SizedBox(height: 10),
+      // ── Ligne 2 : Actions ─────────────────────────────────────────────
+      Row(
+        children: [
+          // Bouton Prédire IA — visible directement
+          GestureDetector(
+            onTap: _showPredictionsIa,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
                 ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            _StatusBadge(label: p.status, color: _statusColor),
-          ],
-        ),
-      ),
-      const SizedBox(width: 8),
-      _AccessToggle(
-        value: _project.portailClient,
-        onChanged:
-            (_updatingStatut ||
-                _project.statut == 'termine' ||
-                _project.statut == 'annule')
-            ? null
-            : _togglePortailClient,
-      ),
-      PopupMenuButton<String>(
-        icon: const Icon(LucideIcons.moreVertical, size: 18, color: kTextSub),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        onSelected: (v) {
-          if (v == 'terminer')
-            _terminerProjet();
-          else if (v == 'annuler')
-            _annulerProjet();
-          else if (v == 'rapport')
-            _showRapportIa();
-          else if (v == 'predire')
-            _showPredictionsIa();
-        },
-        itemBuilder: (_) => [
-          const PopupMenuItem(
-            value: 'rapport',
-            child: Row(children: [
-              Icon(LucideIcons.fileText, size: 14, color: Color(0xFF8B5CF6)),
-              SizedBox(width: 8),
-              Text('Rapport IA', style: TextStyle(color: Color(0xFF8B5CF6))),
-            ]),
-          ),
-          const PopupMenuItem(
-            value: 'predire',
-            child: Row(children: [
-              Icon(LucideIcons.sparkles, size: 14, color: Color(0xFF6366F1)),
-              SizedBox(width: 8),
-              Text('Prédire IA', style: TextStyle(color: Color(0xFF6366F1))),
-            ]),
-          ),
-          if (_project.statut != 'termine')
-            const PopupMenuItem(
-              value: 'terminer',
-              child: Row(
-                children: [
-                  Icon(
-                    LucideIcons.checkCircle,
-                    size: 14,
-                    color: Color(0xFF10B981),
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF6366F1).withOpacity(0.30),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
                   ),
-                  SizedBox(width: 8),
-                  Text('Terminer', style: TextStyle(color: Color(0xFF10B981))),
                 ],
               ),
-            ),
-          if (_project.statut != 'annule')
-            const PopupMenuItem(
-              value: 'annuler',
-              child: Row(
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(LucideIcons.xCircle, size: 14, color: kRed),
-                  SizedBox(width: 8),
-                  Text('Annuler', style: TextStyle(color: kRed)),
+                  Icon(LucideIcons.sparkles, size: 13, color: Colors.white),
+                  SizedBox(width: 5),
+                  Text(
+                    'Prédire IA',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ],
               ),
             ),
+          ),
+          const Spacer(),
+          // Toggle portail client
+          _AccessToggle(
+            value: _project.portailClient,
+            onChanged:
+                (_updatingStatut ||
+                    _project.statut == 'termine' ||
+                    _project.statut == 'annule')
+                ? null
+                : _togglePortailClient,
+          ),
+          // Menu Terminer / Annuler
+          PopupMenuButton<String>(
+            icon: const Icon(LucideIcons.moreVertical, size: 18, color: kTextSub),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            onSelected: (v) {
+              if (v == 'terminer')
+                _terminerProjet();
+              else if (v == 'annuler')
+                _annulerProjet();
+            },
+            itemBuilder: (_) => [
+              if (_project.statut != 'termine')
+                const PopupMenuItem(
+                  value: 'terminer',
+                  child: Row(children: [
+                    Icon(LucideIcons.checkCircle, size: 14, color: Color(0xFF10B981)),
+                    SizedBox(width: 8),
+                    Text('Terminer', style: TextStyle(color: Color(0xFF10B981))),
+                  ]),
+                ),
+              if (_project.statut != 'annule')
+                const PopupMenuItem(
+                  value: 'annuler',
+                  child: Row(children: [
+                    Icon(LucideIcons.xCircle, size: 14, color: kRed),
+                    SizedBox(width: 8),
+                    Text('Annuler', style: TextStyle(color: kRed)),
+                  ]),
+                ),
+            ],
+          ),
         ],
       ),
     ],
@@ -1904,23 +1907,30 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           GestureDetector(
             onTap: _editInfoProjet,
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(LucideIcons.pencil, size: 12, color: kAccent),
-                SizedBox(width: 4),
-                Text(
-                  'Modifier les infos',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: kAccent,
-                    fontWeight: FontWeight.w600,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: kAccent.withOpacity(0.10),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(LucideIcons.pencil, size: 12, color: kAccent),
+                  SizedBox(width: 5),
+                  Text(
+                    'Modifier les infos',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: kAccent,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ],
@@ -2001,44 +2011,50 @@ class _MobileInfoTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
     decoration: BoxDecoration(
-      color: const Color(0xFFF8F9FA),
-      borderRadius: BorderRadius.circular(10),
-      border: Border.all(color: const Color(0xFFEEEEEE)),
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(12),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withOpacity(0.05),
+          blurRadius: 6,
+          offset: const Offset(0, 2),
+        ),
+      ],
     ),
     child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Container(
-          margin: const EdgeInsets.only(top: 1),
-          padding: const EdgeInsets.all(5),
+          width: 30,
+          height: 30,
           decoration: BoxDecoration(
-            color: kAccent.withOpacity(0.10),
-            borderRadius: BorderRadius.circular(6),
+            color: kAccent.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(8),
           ),
-          child: Icon(icon, size: 11, color: kAccent),
+          child: Icon(icon, size: 14, color: kAccent),
         ),
-        const SizedBox(width: 8),
+        const SizedBox(width: 10),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                label,
+                label.toUpperCase(),
                 style: const TextStyle(
                   fontSize: 9,
                   color: kTextSub,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.4,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.5,
                 ),
               ),
               const SizedBox(height: 2),
               Text(
                 value,
                 style: const TextStyle(
-                  fontSize: 11,
+                  fontSize: 12,
                   color: kTextMain,
                   fontWeight: FontWeight.w600,
                 ),
@@ -15247,123 +15263,6 @@ class _DField extends StatelessWidget {
       ),
     ],
   );
-}
-
-// ── IA Rapport dialog ─────────────────────────────────────────────────────────
-
-class _RapportDialog extends StatefulWidget {
-  final Project project;
-  const _RapportDialog({required this.project});
-  @override
-  State<_RapportDialog> createState() => _RapportDialogState();
-}
-
-class _RapportDialogState extends State<_RapportDialog> {
-  String? _rapport;
-  String? _error;
-  bool _loading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _generate();
-  }
-
-  Future<void> _generate() async {
-    try {
-      final res = await AiService.genererRapport(widget.project);
-      if (mounted) setState(() { _rapport = res; _loading = false; });
-    } catch (e) {
-      if (mounted) setState(() { _error = e.toString(); _loading = false; });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: 600,
-          maxHeight: MediaQuery.of(context).size.height * 0.85,
-        ),
-        child: Column(
-          children: [
-            // Header
-            Container(
-              padding: const EdgeInsets.fromLTRB(20, 18, 16, 14),
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(colors: [Color(0xFF8B5CF6), Color(0xFF6366F1)]),
-                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(LucideIcons.fileText, color: Colors.white, size: 18),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'Rapport — ${widget.project.titre}',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  InkWell(
-                    onTap: () => Navigator.pop(context),
-                    borderRadius: BorderRadius.circular(8),
-                    child: const Padding(
-                      padding: EdgeInsets.all(4),
-                      child: Icon(LucideIcons.x, color: Colors.white70, size: 16),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            // Body
-            Expanded(
-              child: _loading
-                  ? const Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      CircularProgressIndicator(color: Color(0xFF8B5CF6)),
-                      SizedBox(height: 14),
-                      Text('Génération du rapport…', style: TextStyle(color: Color(0xFF6B7280))),
-                    ]))
-                  : _error != null
-                      ? Padding(
-                          padding: const EdgeInsets.all(20),
-                          child: Text(_error!, style: const TextStyle(color: Color(0xFFEF4444))),
-                        )
-                      : SingleChildScrollView(
-                          padding: const EdgeInsets.all(20),
-                          child: SelectableText(
-                            _rapport ?? '',
-                            style: const TextStyle(fontSize: 13, height: 1.7, color: Color(0xFF374151)),
-                          ),
-                        ),
-            ),
-            // Footer
-            const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              child: SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.pop(context),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF8B5CF6),
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    padding: const EdgeInsets.symmetric(vertical: 11),
-                  ),
-                  child: const Text('Fermer', style: TextStyle(fontWeight: FontWeight.w600)),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 // ── IA Prédictions dialog ─────────────────────────────────────────────────────
