@@ -17,6 +17,7 @@ class DashboardStats {
   final int totalProjets;
   final int projetsActifs;
   final int projetsTermines;
+  final int projetsAnnules;
   final double budgetTotal;
   final double budgetDepense;
   final int totalAlertes;
@@ -32,6 +33,7 @@ class DashboardStats {
     required this.totalProjets,
     required this.projetsActifs,
     required this.projetsTermines,
+    required this.projetsAnnules,
     required this.budgetTotal,
     required this.budgetDepense,
     required this.totalAlertes,
@@ -187,6 +189,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     int actifs = 0;
     int termines = 0;
+    int annules = 0;
     double budgetTotal = 0;
     double budgetDepense = 0;
 
@@ -196,6 +199,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       budgetDepense += (p['budget_depense'] as num?)?.toDouble() ?? 0;
       if (statut == 'en_cours') actifs++;
       if (statut == 'termine')  termines++;
+      if (statut == 'annule')   annules++;
     }
 
     // Notifications réelles depuis Supabase (triées par date desc)
@@ -209,6 +213,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         totalProjets:    projetsRaw.length,
         projetsActifs:   actifs,
         projetsTermines: termines,
+        projetsAnnules:  annules,
         budgetTotal:     budgetTotal,
         budgetDepense:   budgetDepense,
         totalAlertes:    nonLues.length,
@@ -368,6 +373,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           totalProjets: 0,
           projetsActifs: 0,
           projetsTermines: 0,
+          projetsAnnules: 0,
           budgetTotal: 0,
           budgetDepense: 0,
           totalAlertes: 0,
@@ -389,6 +395,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
         sub2Text:
             '${s.projetsTermines} terminé${s.projetsTermines > 1 ? 's' : ''}',
         sub2Color: kTextSub,
+        sub3Icon: Icons.cancel_outlined,
+        sub3Text:
+            '${s.projetsAnnules} annulé${s.projetsAnnules > 1 ? 's' : ''}',
+        sub3Color: kRed,
       ),
       _KpiCard(
         title: 'Progression globale',
@@ -612,6 +622,9 @@ class _KpiCard extends StatelessWidget {
   final IconData? sub2Icon;
   final String? sub2Text;
   final Color? sub2Color;
+  final IconData? sub3Icon;
+  final String? sub3Text;
+  final Color? sub3Color;
   final Color? borderColor;
 
   const _KpiCard({
@@ -631,6 +644,9 @@ class _KpiCard extends StatelessWidget {
     this.sub2Icon,
     this.sub2Text,
     this.sub2Color,
+    this.sub3Icon,
+    this.sub3Text,
+    this.sub3Color,
     this.borderColor,
   });
 
@@ -714,47 +730,36 @@ class _KpiCard extends StatelessWidget {
             )
           else
             Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                if (sub1Text != null)
-                  Flexible(
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (sub1Icon != null)
-                          Icon(sub1Icon, size: 12, color: sub1Color),
-                        if (sub1Icon != null) const SizedBox(width: 4),
-                        Flexible(
-                          child: Text(
-                            sub1Text!,
-                            style:
-                                TextStyle(color: sub1Color, fontSize: 12),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                if (sub1Text != null) ...[
+                  if (sub1Icon != null)
+                    Icon(sub1Icon, size: 11, color: sub1Color),
+                  if (sub1Icon != null) const SizedBox(width: 3),
+                  Text(sub1Text!, style: TextStyle(color: sub1Color, fontSize: 11)),
+                ],
                 if (sub1Text != null && sub2Text != null)
-                  const SizedBox(width: 12),
-                if (sub2Text != null)
-                  Flexible(
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (sub2Icon != null)
-                          Icon(sub2Icon, size: 12, color: sub2Color),
-                        if (sub2Icon != null) const SizedBox(width: 4),
-                        Flexible(
-                          child: Text(
-                            sub2Text!,
-                            style:
-                                TextStyle(color: sub2Color, fontSize: 12),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 5),
+                    child: Text('·', style: TextStyle(color: kTextSub, fontSize: 11)),
                   ),
+                if (sub2Text != null) ...[
+                  if (sub2Icon != null)
+                    Icon(sub2Icon, size: 11, color: sub2Color),
+                  if (sub2Icon != null) const SizedBox(width: 3),
+                  Text(sub2Text!, style: TextStyle(color: sub2Color, fontSize: 11)),
+                ],
+                if (sub2Text != null && sub3Text != null)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 5),
+                    child: Text('·', style: TextStyle(color: kTextSub, fontSize: 11)),
+                  ),
+                if (sub3Text != null) ...[
+                  if (sub3Icon != null)
+                    Icon(sub3Icon, size: 11, color: sub3Color),
+                  if (sub3Icon != null) const SizedBox(width: 3),
+                  Text(sub3Text!, style: TextStyle(color: sub3Color, fontSize: 11)),
+                ],
               ],
             ),
         ],

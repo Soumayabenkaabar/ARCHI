@@ -1372,7 +1372,13 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
       final clientMsgs = comments.where((c) => c.role == 'client').toList();
       int count;
       if (lastSeen == null) {
-        count = clientMsgs.length;
+        // Première ouverture : on initialise la marque à maintenant,
+        // les anciens commentaires ne comptent pas comme non lus.
+        await prefs.setString(
+          'comments_last_seen_${widget.project.id}',
+          DateTime.now().toUtc().toIso8601String(),
+        );
+        count = 0;
       } else {
         final lastSeenDt = DateTime.tryParse(lastSeen);
         count = lastSeenDt == null
