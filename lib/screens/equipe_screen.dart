@@ -197,7 +197,8 @@ class _EquipeScreenState extends State<EquipeScreen> {
     if (isLoading)
       return const Center(child: CircularProgressIndicator(color: kAccent));
 
-    final filtered = membres.where((m) => m.nom.toLowerCase().contains(searchQuery.toLowerCase())).toList();
+    final filtered = membres.where((m) => m.nom.toLowerCase().contains(searchQuery.toLowerCase())).toList()
+      ..sort((a, b) => a.nom.toLowerCase().compareTo(b.nom.toLowerCase()));
 
     return Stack(
       children: [

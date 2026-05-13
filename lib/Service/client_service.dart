@@ -100,6 +100,7 @@ static Future<void> addClient(Client client) async {
         await _db.from('client_portal_access').insert({
           'client_nom':    client.nom,
           'client_email':  trimEmail,
+          'telephone':     client.telephone.trim().isEmpty ? null : client.telephone.trim(),
           'password_hash': '',
           'actif':         client.accesPortail,
           'projet_id':     projetId, // null si aucun projet trouvé
@@ -122,17 +123,43 @@ static Future<void> addClient(Client client) async {
 }
   // ─── UPDATE CLIENT ───────────
   static Future<void> updateClient(Client client) async {
-  try {
-    if (client.id.isEmpty) throw Exception("ID client invalide");
-    await _db
-        .from('clients')
-        .update(client.toJson())
-        .eq('id', client.id);
-  } catch (e) {
-    debugPrint("ERROR UPDATE CLIENT: $e");
-    rethrow;
+    try {
+      if (client.id.isEmpty) throw Exception("ID client invalide");
+
+      // Récupère l'ancien email avant la mise à jour
+      final old = await _db
+          .from('clients')
+          .select('email')
+          .eq('id', client.id)
+          .maybeSingle();
+
+      await _db
+          .from('clients')
+          .update(client.toJson())
+          .eq('id', client.id);
+
+      // Synchronise client_portal_access (client_nom, telephone, client_email)
+      final oldEmail = (old?['email'] as String? ?? '').trim().toLowerCase();
+      if (oldEmail.isNotEmpty) {
+        final updatePortal = <String, dynamic>{
+          'client_nom': client.nom,
+          'telephone':  client.telephone.trim().isEmpty ? null : client.telephone.trim(),
+        };
+        // Si l'email a changé, on met à jour aussi client_email
+        final newEmail = client.email.trim().toLowerCase();
+        if (newEmail.isNotEmpty && newEmail != oldEmail) {
+          updatePortal['client_email'] = newEmail;
+        }
+        await _db
+            .from('client_portal_access')
+            .update(updatePortal)
+            .eq('client_email', oldEmail);
+      }
+    } catch (e) {
+      debugPrint("ERROR UPDATE CLIENT: $e");
+      rethrow;
+    }
   }
-}
   // Dans projet_service.dart — dans updatePortailClient, après le update DB :
 
 static Future<void> updatePortailClient(String projetId, bool value) async {

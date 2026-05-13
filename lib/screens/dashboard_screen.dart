@@ -388,17 +388,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         iconBg: kAccent.withOpacity(0.1),
         iconColor: kAccent,
         value: '${s.totalProjets}',
-        sub1Icon: Icons.circle,
-        sub1Text: '${s.projetsActifs} actif${s.projetsActifs > 1 ? 's' : ''}',
-        sub1Color: kAccent,
-        sub2Icon: Icons.check_circle_outline,
-        sub2Text:
-            '${s.projetsTermines} terminé${s.projetsTermines > 1 ? 's' : ''}',
-        sub2Color: kTextSub,
-        sub3Icon: Icons.cancel_outlined,
-        sub3Text:
-            '${s.projetsAnnules} annulé${s.projetsAnnules > 1 ? 's' : ''}',
-        sub3Color: kRed,
+      
       ),
       _KpiCard(
         title: 'Progression globale',

@@ -34,6 +34,7 @@ import '../service/model3d_service.dart';
 import '../models/model3d.dart';
 import '../utils/glb_parser.dart';
 import '../widgets/sidebar_widget.dart';
+import '../widgets/model3d_viewer_widget.dart';
 import '../widgets/map_location_picker.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:http/http.dart' as http;
@@ -673,7 +674,8 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
     if (_project.statut == 'annule') return 'annule';
     if (taches.isEmpty) return _project.statut;
     if (taches.every((t) => t.statut == 'termine')) return 'termine';
-    if (taches.any((t) => t.statut == 'en_cours' || t.statut == 'termine')) return 'en_cours';
+    if (taches.any((t) => t.statut == 'en_cours' || t.statut == 'termine'))
+      return 'en_cours';
     return 'en_attente';
   }
 
@@ -988,19 +990,22 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
       : '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
 
   Future<void> _editInfoProjet() async {
-    final clientCtrl = TextEditingController(text: _project.client);
-    final locCtrl    = TextEditingController(text: _project.localisation);
-    final budgetCtrl = TextEditingController(text: _project.budgetTotal.toStringAsFixed(0));
+    final locCtrl = TextEditingController(text: _project.localisation);
+    final budgetCtrl = TextEditingController(
+      text: _project.budgetTotal.toStringAsFixed(0),
+    );
 
     // Charger la liste des membres pour le dropdown chef
     List<Membre> membres = [];
-    try { membres = await MembreService.getMembres(); } catch (_) {}
+    try {
+      membres = await MembreService.getMembres();
+    } catch (_) {}
     final nomsMembres = membres.map((m) => m.nom).toList();
     // Pré-remplir avec le chef actuel, qu'il soit dans la liste ou non
     String? selectedChef = _project.chef.isNotEmpty ? _project.chef : null;
 
     DateTime? dateDebut = _parseDate(_project.dateDebut);
-    DateTime? dateFin   = _parseDate(_project.dateFin);
+    DateTime? dateFin = _parseDate(_project.dateFin);
     String? _debutError;
     String? _finError;
     LatLng? pickedPosition = _project.hasPosition
@@ -1044,7 +1049,7 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
           }
 
           Future<void> pickFin() async {
-            final today  = DateTime.now();
+            final today = DateTime.now();
             final minDate = dateDebut != null
                 ? dateDebut!.add(const Duration(days: 1))
                 : DateTime(2000);
@@ -1066,81 +1071,137 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
           }
 
           // Tuile date avec affichage d'erreur intégré
-          Widget dateTile(String label, DateTime? val, VoidCallback onTap, String? errorText, {String? rawFallback}) =>
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                InkWell(
-                  onTap: onTap,
-                  borderRadius: BorderRadius.circular(10),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: errorText != null ? kRed.withOpacity(0.03) : null,
-                      border: Border.all(
-                        color: errorText != null ? kRed : const Color(0xFFD1D5DB),
-                        width: errorText != null ? 1.5 : 1,
+          Widget dateTile(
+            String label,
+            DateTime? val,
+            VoidCallback onTap,
+            String? errorText, {
+            String? rawFallback,
+          }) => Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              InkWell(
+                onTap: onTap,
+                borderRadius: BorderRadius.circular(10),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: errorText != null ? kRed.withOpacity(0.03) : null,
+                    border: Border.all(
+                      color: errorText != null ? kRed : const Color(0xFFD1D5DB),
+                      width: errorText != null ? 1.5 : 1,
+                    ),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        LucideIcons.calendar,
+                        size: 16,
+                        color: errorText != null ? kRed : kTextSub,
                       ),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(LucideIcons.calendar, size: 16, color: errorText != null ? kRed : kTextSub),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(label, style: TextStyle(fontSize: 11, color: errorText != null ? kRed : kTextSub)),
-                              const SizedBox(height: 2),
-                              Text(
-                                val != null
-                                    ? _displayDate(val)
-                                    : (rawFallback?.isNotEmpty == true ? rawFallback! : '— Choisir une date'),
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: (val == null && (rawFallback == null || rawFallback.isEmpty))
-                                      ? (errorText != null ? kRed : kTextSub)
-                                      : kTextMain,
-                                  fontWeight: FontWeight.w500,
-                                ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              label,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: errorText != null ? kRed : kTextSub,
                               ),
-                            ],
-                          ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              val != null
+                                  ? _displayDate(val)
+                                  : (rawFallback?.isNotEmpty == true
+                                        ? rawFallback!
+                                        : '— Choisir une date'),
+                              style: TextStyle(
+                                fontSize: 13,
+                                color:
+                                    (val == null &&
+                                        (rawFallback == null ||
+                                            rawFallback.isEmpty))
+                                    ? (errorText != null ? kRed : kTextSub)
+                                    : kTextMain,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
                         ),
-                        Icon(LucideIcons.chevronDown, size: 14, color: errorText != null ? kRed : kTextSub),
-                      ],
-                    ),
+                      ),
+                      Icon(
+                        LucideIcons.chevronDown,
+                        size: 14,
+                        color: errorText != null ? kRed : kTextSub,
+                      ),
+                    ],
                   ),
                 ),
-                if (errorText != null) ...[
-                  const SizedBox(height: 4),
-                  Row(children: [
+              ),
+              if (errorText != null) ...[
+                const SizedBox(height: 4),
+                Row(
+                  children: [
                     const Icon(Icons.error_outline, size: 12, color: kRed),
                     const SizedBox(width: 3),
-                    Flexible(child: Text(errorText, style: const TextStyle(fontSize: 11, color: kRed))),
-                  ]),
-                ],
+                    Flexible(
+                      child: Text(
+                        errorText,
+                        style: const TextStyle(fontSize: 11, color: kRed),
+                      ),
+                    ),
+                  ],
+                ),
               ],
-            );
+            ],
+          );
 
           return AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
             title: const Row(
               children: [
                 Icon(LucideIcons.pencil, size: 18, color: kAccent),
                 SizedBox(width: 8),
-                Text('Modifier les informations', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                Text(
+                  'Modifier les informations',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                ),
               ],
             ),
             content: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  TextField(
-                    controller: clientCtrl,
-                    decoration: _dec('Client', LucideIcons.briefcase),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF3F4F6),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFE5E7EB)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(LucideIcons.briefcase, size: 16, color: kTextSub),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            _project.client.isEmpty ? '—' : _project.client,
+                            style: const TextStyle(fontSize: 14, color: kTextSub),
+                          ),
+                        ),
+                        const Icon(LucideIcons.lock, size: 13, color: kTextSub),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 12),
                   TextField(
@@ -1151,27 +1212,53 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
                   // Sélecteur de position sur carte
                   InkWell(
                     onTap: () async {
-                      final pos = await showMapLocationPicker(ctx, initial: pickedPosition);
+                      final pos = await showMapLocationPicker(
+                        ctx,
+                        initial: pickedPosition,
+                      );
                       if (pos != null) {
                         setDlg(() => pickedPosition = pos);
                         try {
                           final uri = Uri.https(
-                            'nominatim.openstreetmap.org', '/reverse',
-                            {'lat': pos.latitude.toString(), 'lon': pos.longitude.toString(), 'format': 'json', 'accept-language': 'fr'},
+                            'nominatim.openstreetmap.org',
+                            '/reverse',
+                            {
+                              'lat': pos.latitude.toString(),
+                              'lon': pos.longitude.toString(),
+                              'format': 'json',
+                              'accept-language': 'fr',
+                            },
                           );
-                          final res = await http.get(uri, headers: {'User-Agent': 'ArchiManager/1.0'});
-                          final data = jsonDecode(res.body) as Map<String, dynamic>;
-                          final addr = data['address'] as Map<String, dynamic>? ?? {};
-                          final city  = (addr['city'] ?? addr['town'] ?? addr['village'] ?? addr['county'] ?? '').toString();
+                          final res = await http.get(
+                            uri,
+                            headers: {'User-Agent': 'ArchiManager/1.0'},
+                          );
+                          final data =
+                              jsonDecode(res.body) as Map<String, dynamic>;
+                          final addr =
+                              data['address'] as Map<String, dynamic>? ?? {};
+                          final city =
+                              (addr['city'] ??
+                                      addr['town'] ??
+                                      addr['village'] ??
+                                      addr['county'] ??
+                                      '')
+                                  .toString();
                           final state = (addr['state'] ?? '').toString();
-                          final loc   = [city, state].where((s) => s.isNotEmpty).join(', ');
+                          final loc = [
+                            city,
+                            state,
+                          ].where((s) => s.isNotEmpty).join(', ');
                           if (loc.isNotEmpty) setDlg(() => locCtrl.text = loc);
                         } catch (_) {}
                       }
                     },
                     borderRadius: BorderRadius.circular(8),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 9,
+                      ),
                       decoration: BoxDecoration(
                         color: pickedPosition != null
                             ? const Color(0xFF10B981).withOpacity(0.07)
@@ -1186,9 +1273,13 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
                       child: Row(
                         children: [
                           Icon(
-                            pickedPosition != null ? LucideIcons.checkCircle : LucideIcons.mapPin,
+                            pickedPosition != null
+                                ? LucideIcons.checkCircle
+                                : LucideIcons.mapPin,
                             size: 13,
-                            color: pickedPosition != null ? const Color(0xFF10B981) : kAccent,
+                            color: pickedPosition != null
+                                ? const Color(0xFF10B981)
+                                : kAccent,
                           ),
                           const SizedBox(width: 7),
                           Expanded(
@@ -1199,7 +1290,9 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
-                                color: pickedPosition != null ? const Color(0xFF10B981) : kAccent,
+                                color: pickedPosition != null
+                                    ? const Color(0xFF10B981)
+                                    : kAccent,
                               ),
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -1208,7 +1301,11 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
                             const SizedBox(width: 4),
                             GestureDetector(
                               onTap: () => setDlg(() => pickedPosition = null),
-                              child: const Icon(Icons.close_rounded, size: 14, color: Color(0xFF10B981)),
+                              child: const Icon(
+                                Icons.close_rounded,
+                                size: 14,
+                                color: Color(0xFF10B981),
+                              ),
                             ),
                           ],
                         ],
@@ -1218,60 +1315,113 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
                   const SizedBox(height: 12),
                   // Chef de projet — sélection via dialog
                   InkWell(
-                    onTap: nomsMembres.isEmpty ? null : () async {
-                      final picked = await showDialog<String>(
-                        context: ctx,
-                        builder: (c) => SimpleDialog(
-                          title: const Text('Chef de projet', style: TextStyle(fontWeight: FontWeight.w700)),
-                          children: nomsMembres.map((nom) => SimpleDialogOption(
-                            onPressed: () => Navigator.pop(c, nom),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 4),
-                              child: Text(nom, style: const TextStyle(fontSize: 14)),
-                            ),
-                          )).toList(),
-                        ),
-                      );
-                      if (picked != null) setDlg(() => selectedChef = picked);
-                    },
+                    onTap: nomsMembres.isEmpty
+                        ? null
+                        : () async {
+                            final picked = await showDialog<String>(
+                              context: ctx,
+                              builder: (c) => SimpleDialog(
+                                title: const Text(
+                                  'Chef de projet',
+                                  style: TextStyle(fontWeight: FontWeight.w700),
+                                ),
+                                children: nomsMembres
+                                    .map(
+                                      (nom) => SimpleDialogOption(
+                                        onPressed: () => Navigator.pop(c, nom),
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 4,
+                                          ),
+                                          child: Text(
+                                            nom,
+                                            style: const TextStyle(
+                                              fontSize: 14,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                    .toList(),
+                              ),
+                            );
+                            if (picked != null)
+                              setDlg(() => selectedChef = picked);
+                          },
                     borderRadius: BorderRadius.circular(10),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 12,
+                      ),
                       decoration: BoxDecoration(
                         border: Border.all(color: const Color(0xFFD1D5DB)),
                         borderRadius: BorderRadius.circular(10),
                       ),
-                      child: Row(children: [
-                        Icon(LucideIcons.user, size: 16, color: kTextSub),
-                        const SizedBox(width: 12),
-                        Expanded(child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Text('Chef de projet', style: TextStyle(fontSize: 11, color: kTextSub)),
-                            const SizedBox(height: 2),
-                            Text(
-                              selectedChef ?? 'Sélectionner un chef',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: selectedChef != null ? kTextMain : kTextSub,
-                                fontWeight: FontWeight.w500,
-                              ),
+                      child: Row(
+                        children: [
+                          Icon(LucideIcons.user, size: 16, color: kTextSub),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text(
+                                  'Chef de projet',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: kTextSub,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  selectedChef ?? 'Sélectionner un chef',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: selectedChef != null
+                                        ? kTextMain
+                                        : kTextSub,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
                             ),
-                          ],
-                        )),
-                        Icon(nomsMembres.isEmpty ? LucideIcons.lock : LucideIcons.chevronDown, size: 14, color: kTextSub),
-                      ]),
+                          ),
+                          Icon(
+                            nomsMembres.isEmpty
+                                ? LucideIcons.lock
+                                : LucideIcons.chevronDown,
+                            size: 14,
+                            color: kTextSub,
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                   const SizedBox(height: 12),
-                  dateTile('Date de début', dateDebut, pickDebut, _debutError, rawFallback: _project.dateDebut),
+                  dateTile(
+                    'Date de début',
+                    dateDebut,
+                    pickDebut,
+                    _debutError,
+                    rawFallback: _project.dateDebut,
+                  ),
                   const SizedBox(height: 12),
-                  dateTile('Date de fin', dateFin, pickFin, _finError, rawFallback: _project.dateFin),
+                  dateTile(
+                    'Date de fin',
+                    dateFin,
+                    pickFin,
+                    _finError,
+                    rawFallback: _project.dateFin,
+                  ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: budgetCtrl,
-                    decoration: _dec('Budget total (DT)', LucideIcons.dollarSign),
+                    decoration: _dec(
+                      'Budget total (DT)',
+                      LucideIcons.dollarSign,
+                    ),
                     keyboardType: TextInputType.number,
                   ),
                 ],
@@ -1283,28 +1433,39 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
                 child: const Text('Annuler'),
               ),
               ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: kAccent, elevation: 0),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: kAccent,
+                  elevation: 0,
+                ),
                 onPressed: () {
                   bool valid = true;
                   setDlg(() {
                     _debutError = null;
-                    _finError   = null;
+                    _finError = null;
                     if (dateDebut != null && dateFin == null) {
-                      _finError = 'Date de fin requise si une date de début est définie';
+                      _finError =
+                          'Date de fin requise si une date de début est définie';
                       valid = false;
                     }
                     if (dateFin != null && dateDebut == null) {
-                      _debutError = 'Date de début requise si une date de fin est définie';
+                      _debutError =
+                          'Date de début requise si une date de fin est définie';
                       valid = false;
                     }
-                    if (dateDebut != null && dateFin != null && !dateFin!.isAfter(dateDebut!)) {
-                      _finError = 'La date de fin doit être après la date de début';
+                    if (dateDebut != null &&
+                        dateFin != null &&
+                        !dateFin!.isAfter(dateDebut!)) {
+                      _finError =
+                          'La date de fin doit être après la date de début';
                       valid = false;
                     }
                   });
                   if (valid) Navigator.pop(ctx, true);
                 },
-                child: const Text('Enregistrer', style: TextStyle(color: Colors.white)),
+                child: const Text(
+                  'Enregistrer',
+                  style: TextStyle(color: Colors.white),
+                ),
               ),
             ],
           );
@@ -1322,19 +1483,21 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
       statut: _project.statut,
       avancement: _project.avancement,
       dateDebut: dateDebut == null ? null : _fmtDate(dateDebut!),
-      dateFin:   dateFin   == null ? null : _fmtDate(dateFin!),
-      budgetTotal: double.tryParse(
-        budgetCtrl.text.replaceAll(' ', '').replaceAll(',', '.'),
-      ) ?? _project.budgetTotal,
+      dateFin: dateFin == null ? null : _fmtDate(dateFin!),
+      budgetTotal:
+          double.tryParse(
+            budgetCtrl.text.replaceAll(' ', '').replaceAll(',', '.'),
+          ) ??
+          _project.budgetTotal,
       budgetDepense: _project.budgetDepense,
-      client:       clientCtrl.text.trim(),
+      client: _project.client,
       localisation: locCtrl.text.trim(),
-      chef:         selectedChef ?? _project.chef,
-      taches:       _project.taches,
-      membres:      _project.membres,
-      docs:         _project.docs,
+      chef: selectedChef ?? _project.chef,
+      taches: _project.taches,
+      membres: _project.membres,
+      docs: _project.docs,
       portailClient: _project.portailClient,
-      latitude:  pickedPosition?.latitude,
+      latitude: pickedPosition?.latitude,
       longitude: pickedPosition?.longitude,
     );
 
@@ -1676,13 +1839,29 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
             // IA buttons
             OutlinedButton.icon(
               onPressed: _showPredictionsIa,
-              icon: const Icon(LucideIcons.sparkles, size: 13, color: Color(0xFF6366F1)),
+              icon: const Icon(
+                LucideIcons.sparkles,
+                size: 13,
+                color: Color(0xFF6366F1),
+              ),
               style: OutlinedButton.styleFrom(
                 side: const BorderSide(color: Color(0xFF6366F1)),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
               ),
-              label: const Text('Prédire', style: TextStyle(color: Color(0xFF6366F1), fontSize: 12, fontWeight: FontWeight.w600)),
+              label: const Text(
+                'Prédire',
+                style: TextStyle(
+                  color: Color(0xFF6366F1),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ),
             const SizedBox(width: 10),
             _AccessToggle(
@@ -1835,8 +2014,14 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
           ),
           // Menu Terminer / Annuler
           PopupMenuButton<String>(
-            icon: const Icon(LucideIcons.moreVertical, size: 18, color: kTextSub),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            icon: const Icon(
+              LucideIcons.moreVertical,
+              size: 18,
+              color: kTextSub,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
             onSelected: (v) {
               if (v == 'terminer')
                 _terminerProjet();
@@ -1847,20 +2032,31 @@ class _ProjetDetailScreenState extends State<ProjetDetailScreen>
               if (_project.statut != 'termine')
                 const PopupMenuItem(
                   value: 'terminer',
-                  child: Row(children: [
-                    Icon(LucideIcons.checkCircle, size: 14, color: Color(0xFF10B981)),
-                    SizedBox(width: 8),
-                    Text('Terminer', style: TextStyle(color: Color(0xFF10B981))),
-                  ]),
+                  child: Row(
+                    children: [
+                      Icon(
+                        LucideIcons.checkCircle,
+                        size: 14,
+                        color: Color(0xFF10B981),
+                      ),
+                      SizedBox(width: 8),
+                      Text(
+                        'Terminer',
+                        style: TextStyle(color: Color(0xFF10B981)),
+                      ),
+                    ],
+                  ),
                 ),
               if (_project.statut != 'annule')
                 const PopupMenuItem(
                   value: 'annuler',
-                  child: Row(children: [
-                    Icon(LucideIcons.xCircle, size: 14, color: kRed),
-                    SizedBox(width: 8),
-                    Text('Annuler', style: TextStyle(color: kRed)),
-                  ]),
+                  child: Row(
+                    children: [
+                      Icon(LucideIcons.xCircle, size: 14, color: kRed),
+                      SizedBox(width: 8),
+                      Text('Annuler', style: TextStyle(color: kRed)),
+                    ],
+                  ),
                 ),
             ],
           ),
@@ -2224,7 +2420,12 @@ class _TachesTabState extends State<_TachesTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (_refreshing) const LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
+          if (_refreshing)
+            const LinearProgressIndicator(
+              color: kAccent,
+              minHeight: 2,
+              backgroundColor: Colors.transparent,
+            ),
           if (isMobile) ...[
             // ── Ligne 1 : Titre ──────────────────────────────────────────────
             Row(
@@ -4999,7 +5200,12 @@ class _FinancesTabState extends State<_FinancesTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (_refreshing) const LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
+          if (_refreshing)
+            const LinearProgressIndicator(
+              color: kAccent,
+              minHeight: 2,
+              backgroundColor: Colors.transparent,
+            ),
           // ── HEADER ─────────────────────────────────────────────────────────
           _buildHeader(isMobile),
           const SizedBox(height: 20),
@@ -8564,13 +8770,18 @@ class _DocumentsTabState extends State<_DocumentsTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (_refreshing) const LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
+          if (_refreshing)
+            const LinearProgressIndicator(
+              color: kAccent,
+              minHeight: 2,
+              backgroundColor: Colors.transparent,
+            ),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Expanded(
                 child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       'Documents & Livrables',
@@ -9992,7 +10203,12 @@ class _EquipeTabState extends State<_EquipeTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (_refreshing) const LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
+          if (_refreshing)
+            const LinearProgressIndicator(
+              color: kAccent,
+              minHeight: 2,
+              backgroundColor: Colors.transparent,
+            ),
           // ── Header ──────────────────────────────────────────────────────
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -11351,7 +11567,12 @@ class _SuiviPhotosTabState extends State<_SuiviPhotosTab> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (_refreshing) const LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
+        if (_refreshing)
+          const LinearProgressIndicator(
+            color: kAccent,
+            minHeight: 2,
+            backgroundColor: Colors.transparent,
+          ),
         // Header + sous-onglets
         Container(
           color: kCardBg,
@@ -13278,20 +13499,22 @@ class _Modele3DTab extends StatefulWidget {
   State<_Modele3DTab> createState() => _Modele3DTabState();
 }
 
-class _Modele3DTabState extends State<_Modele3DTab> {
+class _Modele3DTabState extends State<_Modele3DTab>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   Model3D? _model;
   bool _loading = true;
   bool _uploading = false;
   bool _refreshing = false;
-  WebViewController? _viewerCtrl;
-  final Set<String> _highlighted = {};
   Timer? _refreshTimer;
 
   @override
   void initState() {
     super.initState();
     _loadModel();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+    _refreshTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
       if (!mounted) return;
       setState(() => _refreshing = true);
       await _loadModel();
@@ -13312,30 +13535,9 @@ class _Modele3DTabState extends State<_Modele3DTab> {
         _model = m;
         _loading = false;
       });
-      if (m != null) _initViewer(m.url);
     } catch (_) {
       setState(() => _loading = false);
     }
-  }
-
-  void _initViewer(String url) {
-    final ctrl = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..addJavaScriptChannel(
-        'FlutterChannel',
-        onMessageReceived: (msg) {
-          try {
-            final data = jsonDecode(msg.message) as Map<String, dynamic>;
-            if (data['type'] == 'meshClicked')
-              _onMeshClicked(data['name'] as String);
-          } catch (_) {}
-        },
-      )
-      ..loadHtmlString(_buildFullViewerHtml(url));
-    setState(() {
-      _viewerCtrl = ctrl;
-      _highlighted.clear();
-    });
   }
 
   Future<void> _upload() async {
@@ -13356,212 +13558,125 @@ class _Modele3DTabState extends State<_Modele3DTab> {
         file.bytes!,
         file.name,
       );
-      final meshNames = GlbParser.extractMeshNames(file.bytes!);
-      final model = await Model3DService.saveModel(
-        widget.project.id,
-        url,
-        meshNames,
-      );
+      final model = await Model3DService.saveModel(widget.project.id, url, []);
       setState(() {
         _model = model;
         _uploading = false;
       });
-      _initViewer(url);
-      if (mounted)
-        _snack(
-          context,
-          '✓ Modèle chargé — ${meshNames.length} mesh(es) détectés',
-          kAccent,
-        );
     } catch (e) {
       setState(() => _uploading = false);
       if (mounted) _snack(context, 'Erreur upload: $e', kRed);
+      return;
     }
+    if (mounted) _snack(context, '✓ Modèle 3D chargé avec succès', kAccent);
   }
 
   Future<void> _deleteModel() async {
-    await Model3DService.deleteModel(widget.project.id);
-    setState(() {
-      _model = null;
-      _viewerCtrl = null;
-      _highlighted.clear();
-    });
-  }
-
-  void _toggleHighlight(String name) {
-    setState(() {
-      if (_highlighted.contains(name))
-        _highlighted.remove(name);
-      else
-        _highlighted.add(name);
-    });
-    _viewerCtrl?.runJavaScript(
-      'highlightMeshes(${jsonEncode(_highlighted.toList())});',
-    );
-    if (_highlighted.contains(name)) {
-      _viewerCtrl?.runJavaScript('zoomToMesh(${jsonEncode(name)});');
+    try {
+      await Model3DService.deleteModel(widget.project.id);
+      setState(() => _model = null);
+      if (mounted) _snack(context, '✓ Modèle supprimé', kAccent);
+    } catch (e) {
+      if (mounted) _snack(context, 'Erreur suppression : $e', kRed);
     }
   }
 
-  void _onMeshClicked(String name) {
-    _toggleHighlight(name);
-    if (!mounted) return;
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: kAccent.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(LucideIcons.box, size: 16, color: kAccent),
-            ),
-            const SizedBox(width: 12),
-            const Text(
-              'Partie sélectionnée',
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w700,
-                color: kTextMain,
-              ),
-            ),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF0FDF4),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: const Color(0xFF10B981).withOpacity(0.3),
-                ),
-              ),
-              child: Row(
-                children: [
-                  const Icon(
-                    LucideIcons.checkCircle,
-                    size: 14,
-                    color: Color(0xFF10B981),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      name,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13,
-                        color: kTextMain,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _highlighted.contains(name)
-                  ? '✓ Surbrillance activée'
-                  : 'Surbrillance désactivée',
-              style: TextStyle(
-                fontSize: 12,
-                color: _highlighted.contains(name)
-                    ? const Color(0xFF10B981)
-                    : kTextSub,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text(
-              'OK',
-              style: TextStyle(color: kAccent, fontWeight: FontWeight.w700),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   String _buildFullViewerHtml(String url) {
-    final safeUrl = url.replaceAll("'", "\\'");
-    return '''<!DOCTYPE html><html><head><meta charset="utf-8">
-<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#1F2937;overflow:hidden}
-#load{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);color:#9CA3AF;font-family:Arial;font-size:13px;text-align:center}
-#hint{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);color:rgba(255,255,255,0.5);font-family:Arial;font-size:11px;pointer-events:none}
-</style></head><body>
-<div id="load">⏳ Chargement du modèle 3D...</div>
-<div id="hint">Cliquez sur une partie pour la sélectionner · Faites glisser pour pivoter</div>
-<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/"}}</script>
-<script type="module">
-import * as THREE from 'three';
-import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
-import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
-window._pendingClicks=[];
-const scene=new THREE.Scene();scene.background=new THREE.Color(0x1F2937);
-const camera=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,0.01,1000);
-const renderer=new THREE.WebGLRenderer({antialias:true});
-renderer.setPixelRatio(devicePixelRatio);renderer.setSize(innerWidth,innerHeight);
-document.body.appendChild(renderer.domElement);
-const ctrl=new OrbitControls(camera,renderer.domElement);ctrl.enableDamping=true;
-scene.add(new THREE.AmbientLight(0xffffff,0.8));
-const dl=new THREE.DirectionalLight(0xffffff,0.9);dl.position.set(10,10,5);scene.add(dl);
-const meshMap={},origMat={};
-new GLTFLoader().load('$safeUrl',gltf=>{
-  document.getElementById('load').style.display='none';
-  scene.add(gltf.scene);
-  const box=new THREE.Box3().setFromObject(gltf.scene);
-  const ctr=box.getCenter(new THREE.Vector3()),sz=box.getSize(new THREE.Vector3());
-  const mx=Math.max(sz.x,sz.y,sz.z)||1;
-  gltf.scene.position.sub(ctr);camera.position.set(mx*1.5,mx,mx*1.5);ctrl.target.set(0,0,0);ctrl.update();
-  gltf.scene.traverse(o=>{if(o.isMesh){const n=o.name||'Mesh_'+Object.keys(meshMap).length;o.name=n;meshMap[n]=o;origMat[n]=Array.isArray(o.material)?o.material.map(m=>m.clone()):o.material?o.material.clone():new THREE.MeshStandardMaterial();}});
-  const names=Object.keys(meshMap);
-  if(window.FlutterChannel)window.FlutterChannel.postMessage(JSON.stringify({type:'meshList',names}));
-  window.parent&&window.parent.postMessage(JSON.stringify({type:'meshList',names}),'*');
-},undefined,e=>document.getElementById('load').textContent='Erreur: '+e.message);
-window.highlightMeshes=ns=>{
-  const s=new Set(ns);
-  Object.entries(meshMap).forEach(([n,m])=>{const o=origMat[n];m.material=Array.isArray(o)?o.map(x=>x.clone()):o?o.clone():new THREE.MeshStandardMaterial();});
-  s.forEach(n=>{if(meshMap[n])meshMap[n].material=new THREE.MeshStandardMaterial({color:0x3B82F6,emissive:0x1d4ed8,emissiveIntensity:0.4,transparent:true,opacity:0.9});});
-};
-window.zoomToMesh=n=>{const m=meshMap[n];if(!m)return;const b=new THREE.Box3().setFromObject(m);const c=b.getCenter(new THREE.Vector3());const s=b.getSize(new THREE.Vector3());const mx=Math.max(s.x,s.y,s.z)||1;ctrl.target.copy(c);camera.position.set(c.x+mx*2,c.y+mx,c.z+mx*2);ctrl.update();};
-const ray=new THREE.Raycaster(),mouse=new THREE.Vector2();
-renderer.domElement.addEventListener('click',e=>{
-  const r=renderer.domElement.getBoundingClientRect();
-  mouse.x=((e.clientX-r.left)/r.width)*2-1;mouse.y=-((e.clientY-r.top)/r.height)*2+1;
-  ray.setFromCamera(mouse,camera);
-  const hits=ray.intersectObjects(Object.values(meshMap),false);
-  if(hits.length){const name=hits[0].object.name;window._pendingClicks.push(name);
-  if(window.FlutterChannel)window.FlutterChannel.postMessage(JSON.stringify({type:'meshClicked',name}));
-  window.parent&&window.parent.postMessage(JSON.stringify({type:'meshClicked',name}),'*');}
+    final safeUrl = url.replaceAll("'", "\\'").replaceAll('"', '&quot;');
+    return '''<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#1F2937;overflow:hidden}
+#load{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);color:#9CA3AF;font:13px Arial;text-align:center;pointer-events:none;line-height:1.8}
+#hint{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);color:rgba(255,255,255,0.35);font:11px Arial;pointer-events:none;white-space:nowrap}
+</style>
+</head>
+<body>
+<div id="load">&#x23F3; Chargement&#x2026;<br><span style="font-size:11px;color:#6B7280">Pr&#xe9;paration du viewer 3D</span></div>
+<div id="hint">Glisser pour pivoter &middot; Scroll pour zoomer &middot; Clic droit pour d&#xe9;placer</div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.134.0/build/three.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.134.0/examples/js/loaders/GLTFLoader.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.134.0/examples/js/controls/OrbitControls.js" defer></script>
+<script>
+document.addEventListener('DOMContentLoaded',function(){
+  var loadEl=document.getElementById('load');
+  var scene=new THREE.Scene();
+  scene.background=new THREE.Color(0x1F2937);
+  var camera=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,0.01,5000);
+  var renderer=new THREE.WebGLRenderer({antialias:true});
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+  renderer.setSize(innerWidth,innerHeight);
+  document.body.appendChild(renderer.domElement);
+  var controls=new THREE.OrbitControls(camera,renderer.domElement);
+  controls.enableDamping=true;
+  controls.dampingFactor=0.08;
+  scene.add(new THREE.AmbientLight(0xffffff,0.8));
+  var dl=new THREE.DirectionalLight(0xffffff,1.0);
+  dl.position.set(5,10,5);
+  scene.add(dl);
+  var dl2=new THREE.DirectionalLight(0xffffff,0.3);
+  dl2.position.set(-5,-5,-5);
+  scene.add(dl2);
+  loadEl.innerHTML='&#x23F3; Chargement du mod&#xe8;le&#x2026;<br><span style="font-size:11px;color:#6B7280">R&#xe9;cup&#xe9;ration du fichier GLB</span>';
+  new THREE.GLTFLoader().load('$safeUrl',function(gltf){
+    loadEl.style.display='none';
+    scene.add(gltf.scene);
+    var box=new THREE.Box3().setFromObject(gltf.scene);
+    var center=box.getCenter(new THREE.Vector3());
+    var size=box.getSize(new THREE.Vector3());
+    var mx=Math.max(size.x,size.y,size.z)||1;
+    gltf.scene.position.sub(center);
+    camera.position.set(mx*1.5,mx*0.8,mx*1.5);
+    controls.target.set(0,0,0);
+    controls.update();
+  },function(xhr){
+    if(xhr.total>0){
+      var pct=Math.round(xhr.loaded/xhr.total*100);
+      loadEl.innerHTML='&#x23F3; Chargement du mod&#xe8;le&#x2026;<br><span style="font-size:11px;color:#6B7280">'+pct+'%</span>';
+    }
+  },function(err){
+    loadEl.innerHTML='<span style="color:#ef4444">&#x274C; Erreur de chargement</span>';
+    console.error(err);
+  });
+  window.addEventListener('resize',function(){
+    camera.aspect=innerWidth/innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth,innerHeight);
+  });
+  (function animate(){
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene,camera);
+  })();
 });
-window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
-(function animate(){requestAnimationFrame(animate);ctrl.update();renderer.render(scene,camera);}());
-</script></body></html>''';
+</script>
+</body>
+</html>''';
   }
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final isMobile = MediaQuery.of(context).size.width < 800;
     final pad = isMobile ? 16.0 : 28.0;
 
     if (_loading)
       return const Center(child: CircularProgressIndicator(color: kAccent));
 
-    // ── Viewer + mesh panel layout ────────────────────────────────────────
-    if (_model != null && _viewerCtrl != null) {
+    // ── Viewer GLB ───────────────────────────────────────────────────────
+    if (_model != null) {
       return Column(
         children: [
-          if (_refreshing) const LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
+          if (_refreshing)
+            const LinearProgressIndicator(
+              color: kAccent,
+              minHeight: 2,
+              backgroundColor: Colors.transparent,
+            ),
           // Toolbar
           Container(
             padding: EdgeInsets.symmetric(horizontal: pad, vertical: 12),
@@ -13590,41 +13705,12 @@ window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camer
                         ),
                       ),
                       Text(
-                        '${_model!.meshNames.length} mesh(es) · cliquez pour sélectionner',
+                        'Fichier GLB',
                         style: const TextStyle(color: kTextSub, fontSize: 11),
                       ),
                     ],
                   ),
                 ),
-                if (_highlighted.isNotEmpty)
-                  Container(
-                    margin: const EdgeInsets.only(right: 8),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: kAccent.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      '${_highlighted.length} sél.',
-                      style: const TextStyle(
-                        color: kAccent,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                if (_highlighted.isNotEmpty)
-                  IconButton(
-                    icon: const Icon(LucideIcons.x, size: 14, color: kTextSub),
-                    tooltip: 'Tout désélectionner',
-                    onPressed: () {
-                      setState(() => _highlighted.clear());
-                      _viewerCtrl?.runJavaScript('highlightMeshes([]);');
-                    },
-                  ),
                 const SizedBox(width: 4),
                 ElevatedButton.icon(
                   onPressed: _uploading ? null : _upload,
@@ -13689,21 +13775,12 @@ window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camer
               ],
             ),
           ),
-          // Main area: 3D viewer + mesh list panel
+          // Viewer GLB plein écran
           Expanded(
-            child: isMobile
-                ? Column(
-                    children: [
-                      Expanded(child: WebViewWidget(controller: _viewerCtrl!)),
-                      _buildMeshPanel(),
-                    ],
-                  )
-                : Row(
-                    children: [
-                      Expanded(child: WebViewWidget(controller: _viewerCtrl!)),
-                      _buildMeshPanel(),
-                    ],
-                  ),
+            child: Model3DViewerWidget(
+              key: ValueKey(_model!.url),
+              htmlContent: _buildFullViewerHtml(_model!.url),
+            ),
           ),
         ],
       );
@@ -13718,7 +13795,12 @@ window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camer
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              if (_refreshing) const LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
+              if (_refreshing)
+                const LinearProgressIndicator(
+                  color: kAccent,
+                  minHeight: 2,
+                  backgroundColor: Colors.transparent,
+                ),
               const SizedBox(height: 40),
               Container(
                 width: 80,
@@ -13744,7 +13826,7 @@ window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camer
               ),
               const SizedBox(height: 8),
               const Text(
-                'Uploadez un fichier .glb avec des meshes nommés (ex: Wall_Salon, Door_Main, Roof) pour activer la sélection par parties.',
+                'Uploadez un fichier .glb pour visualiser et pivoter votre maquette 3D directement dans l\'application.',
                 style: TextStyle(color: kTextSub, fontSize: 13),
                 textAlign: TextAlign.center,
               ),
@@ -13850,98 +13932,6 @@ window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camer
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildMeshPanel() {
-    final meshNames = _model?.meshNames ?? [];
-    return Container(
-      width: 240,
-      decoration: const BoxDecoration(
-        color: Color(0xFFF9FAFB),
-        border: Border(left: BorderSide(color: Color(0xFFE5E7EB))),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'PARTIES DU BÂTIMENT',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    color: kTextSub,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'Cliquez sur le modèle ou sur un chip pour surligner.',
-                  style: TextStyle(fontSize: 10, color: kTextSub),
-                ),
-              ],
-            ),
-          ),
-          const Divider(height: 1, color: Color(0xFFE5E7EB)),
-          Expanded(
-            child: meshNames.isEmpty
-                ? const Center(
-                    child: Text(
-                      'Aucun mesh nommé\ndétecté',
-                      style: TextStyle(color: kTextSub, fontSize: 12),
-                      textAlign: TextAlign.center,
-                    ),
-                  )
-                : ListView(
-                    padding: const EdgeInsets.all(12),
-                    children: [
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: [
-                          for (final name in meshNames)
-                            GestureDetector(
-                              onTap: () => _toggleHighlight(name),
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 150),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 5,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: _highlighted.contains(name)
-                                      ? kAccent
-                                      : Colors.white,
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(
-                                    color: _highlighted.contains(name)
-                                        ? kAccent
-                                        : const Color(0xFFE5E7EB),
-                                  ),
-                                ),
-                                child: Text(
-                                  name,
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
-                                    color: _highlighted.contains(name)
-                                        ? Colors.white
-                                        : kTextSub,
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ],
-                  ),
-          ),
-        ],
       ),
     );
   }
@@ -14189,7 +14179,12 @@ class _CommentairesTabState extends State<_CommentairesTab> {
       padding: EdgeInsets.all(pad),
       child: Column(
         children: [
-          if (_refreshing) const LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
+          if (_refreshing)
+            const LinearProgressIndicator(
+              color: kAccent,
+              minHeight: 2,
+              backgroundColor: Colors.transparent,
+            ),
           // ── Stats header ────────────────────────────────────────────────────
           Container(
             margin: const EdgeInsets.only(bottom: 12),
@@ -15294,9 +15289,17 @@ class _PredictionsDialogState extends State<_PredictionsDialog> {
   Future<void> _predict() async {
     try {
       final res = await AiService.predireProjet(widget.project);
-      if (mounted) setState(() { _preds = res; _loading = false; });
+      if (mounted)
+        setState(() {
+          _preds = res;
+          _loading = false;
+        });
     } catch (e) {
-      if (mounted) setState(() { _error = e.toString(); _loading = false; });
+      if (mounted)
+        setState(() {
+          _error = e.toString();
+          _loading = false;
+        });
     }
   }
 
@@ -15321,17 +15324,27 @@ class _PredictionsDialogState extends State<_PredictionsDialog> {
             Container(
               padding: const EdgeInsets.fromLTRB(20, 18, 16, 14),
               decoration: const BoxDecoration(
-                gradient: LinearGradient(colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)]),
+                gradient: LinearGradient(
+                  colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+                ),
                 borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
               ),
               child: Row(
                 children: [
-                  const Icon(LucideIcons.sparkles, color: Colors.white, size: 18),
+                  const Icon(
+                    LucideIcons.sparkles,
+                    color: Colors.white,
+                    size: 18,
+                  ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       'Prédictions — ${p.titre}',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
@@ -15340,7 +15353,11 @@ class _PredictionsDialogState extends State<_PredictionsDialog> {
                     borderRadius: BorderRadius.circular(8),
                     child: const Padding(
                       padding: EdgeInsets.all(4),
-                      child: Icon(LucideIcons.x, color: Colors.white70, size: 16),
+                      child: Icon(
+                        LucideIcons.x,
+                        color: Colors.white70,
+                        size: 16,
+                      ),
                     ),
                   ),
                 ],
@@ -15351,45 +15368,76 @@ class _PredictionsDialogState extends State<_PredictionsDialog> {
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(20),
                 child: _loading
-                    ? const Center(child: Padding(
-                        padding: EdgeInsets.symmetric(vertical: 32),
-                        child: Column(mainAxisSize: MainAxisSize.min, children: [
-                          CircularProgressIndicator(color: Color(0xFF6366F1)),
-                          SizedBox(height: 14),
-                          Text('Calcul des prédictions…', style: TextStyle(color: Color(0xFF6B7280))),
-                        ]),
-                      ))
-                    : _error != null
-                        ? Text(_error!, style: const TextStyle(color: Color(0xFFEF4444), fontSize: 13))
-                        : Column(
+                    ? const Center(
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(vertical: 32),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              _PredRow(label: 'Budget final estimé', value: _preds!['budget_final_estime'] ?? '—'),
-                              const SizedBox(height: 12),
-                              _PredRow(label: 'Date de fin estimée', value: _preds!['date_fin_estimee'] ?? '—'),
-                              const SizedBox(height: 12),
-                              _PredRow(
-                                label: 'Niveau de risque',
-                                value: _preds!['niveau_risque'] ?? '—',
-                                valueColor: _riskColor(_preds!['niveau_risque'] ?? ''),
+                              CircularProgressIndicator(
+                                color: Color(0xFF6366F1),
                               ),
-                              const SizedBox(height: 12),
-                              _PredRow(label: 'Probabilité respect budget', value: _preds!['probabilite_respect_budget'] ?? '—'),
-                              if ((_preds!['justification'] ?? '').isNotEmpty) ...[
-                                const SizedBox(height: 16),
-                                Container(
-                                  padding: const EdgeInsets.all(12),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFF5F3FF),
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  child: Text(
-                                    _preds!['justification']!,
-                                    style: const TextStyle(fontSize: 13, color: Color(0xFF374151), height: 1.5),
-                                  ),
-                                ),
-                              ],
+                              SizedBox(height: 14),
+                              Text(
+                                'Calcul des prédictions…',
+                                style: TextStyle(color: Color(0xFF6B7280)),
+                              ),
                             ],
                           ),
+                        ),
+                      )
+                    : _error != null
+                    ? Text(
+                        _error!,
+                        style: const TextStyle(
+                          color: Color(0xFFEF4444),
+                          fontSize: 13,
+                        ),
+                      )
+                    : Column(
+                        children: [
+                          _PredRow(
+                            label: 'Budget final estimé',
+                            value: _preds!['budget_final_estime'] ?? '—',
+                          ),
+                          const SizedBox(height: 12),
+                          _PredRow(
+                            label: 'Date de fin estimée',
+                            value: _preds!['date_fin_estimee'] ?? '—',
+                          ),
+                          const SizedBox(height: 12),
+                          _PredRow(
+                            label: 'Niveau de risque',
+                            value: _preds!['niveau_risque'] ?? '—',
+                            valueColor: _riskColor(
+                              _preds!['niveau_risque'] ?? '',
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          _PredRow(
+                            label: 'Probabilité respect budget',
+                            value: _preds!['probabilite_respect_budget'] ?? '—',
+                          ),
+                          if ((_preds!['justification'] ?? '').isNotEmpty) ...[
+                            const SizedBox(height: 16),
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF5F3FF),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                _preds!['justification']!,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: Color(0xFF374151),
+                                  height: 1.5,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
               ),
             ),
             // Footer
@@ -15404,10 +15452,15 @@ class _PredictionsDialogState extends State<_PredictionsDialog> {
                     backgroundColor: const Color(0xFF6366F1),
                     foregroundColor: Colors.white,
                     elevation: 0,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                     padding: const EdgeInsets.symmetric(vertical: 11),
                   ),
-                  child: const Text('Fermer', style: TextStyle(fontWeight: FontWeight.w600)),
+                  child: const Text(
+                    'Fermer',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
                 ),
               ),
             ),
@@ -15427,9 +15480,21 @@ class _PredRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Row(
     children: [
-      Expanded(child: Text(label, style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280)))),
+      Expanded(
+        child: Text(
+          label,
+          style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
+        ),
+      ),
       const SizedBox(width: 12),
-      Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: valueColor ?? kTextMain)),
+      Text(
+        value,
+        style: TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
+          color: valueColor ?? kTextMain,
+        ),
+      ),
     ],
   );
 }

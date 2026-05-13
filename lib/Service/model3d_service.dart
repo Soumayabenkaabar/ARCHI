@@ -26,7 +26,7 @@ class Model3DService {
     return _storage.from(_bucket).getPublicUrl(path);
   }
 
-  static Future<Model3D?> getModel(String projectId) async {
+static Future<Model3D?> getModel(String projectId) async {
     final data = await _db
         .from(_table)
         .select()
@@ -69,6 +69,15 @@ class Model3DService {
   }
 
   static Future<void> deleteModel(String projectId) async {
+    // Supprimer les fichiers du bucket Storage
+    try {
+      final files = await _storage.from(_bucket).list(path: projectId);
+      if (files.isNotEmpty) {
+        final paths = files.map((f) => '$projectId/${f.name}').toList();
+        await _storage.from(_bucket).remove(paths);
+      }
+    } catch (_) {}
+    // Supprimer l'enregistrement en base
     await _db.from(_table).delete().eq('project_id', projectId);
   }
 }

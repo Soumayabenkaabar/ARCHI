@@ -7,7 +7,6 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../constants/colors.dart';
 import '../models/client.dart';
-import 'ai_screen.dart';
 import '../widgets/client_card.dart';
 
 class ClientsScreen extends StatefulWidget {
@@ -223,20 +222,58 @@ class _ClientsScreenState extends State<ClientsScreen> {
                               ),
                               const SizedBox(height: 12),
 
-                              _DialogField(
-                                icon: LucideIcons.mail,
-                                label: 'EMAIL *',
-                                hint: 'contact@ocp.ma',
-                                controller: emailController,
-                                keyboardType: TextInputType.emailAddress,
-                                validator: (v) {
-                                  if (v == null || v.trim().isEmpty) return 'Email obligatoire';
-                                  final regex = RegExp(r'^[\w\.\-]+@[\w\-]+\.[a-z]{2,}$',
-                                      caseSensitive: false);
-                                  if (!regex.hasMatch(v.trim())) return 'Format email invalide';
-                                  return null;
-                                },
-                              ),
+                              if (isEdit) ...[
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'EMAIL',
+                                      style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
+                                          color: kTextSub,
+                                          letterSpacing: 0.5),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFF3F4F6),
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(color: const Color(0xFFE5E7EB)),
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          const Icon(LucideIcons.mail, size: 14, color: kTextSub),
+                                          const SizedBox(width: 10),
+                                          Expanded(
+                                            child: Text(
+                                              clientToEdit!.email.isEmpty ? '—' : clientToEdit.email,
+                                              style: const TextStyle(fontSize: 13, color: kTextSub),
+                                            ),
+                                          ),
+                                          const Icon(LucideIcons.lock, size: 13, color: kTextSub),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ] else ...[
+                                _DialogField(
+                                  icon: LucideIcons.mail,
+                                  label: 'EMAIL *',
+                                  hint: 'contact@ocp.ma',
+                                  controller: emailController,
+                                  keyboardType: TextInputType.emailAddress,
+                                  validator: (v) {
+                                    if (v == null || v.trim().isEmpty) return 'Email obligatoire';
+                                    final regex = RegExp(r'^[\w\.\-]+@[\w\-]+\.[a-z]{2,}$',
+                                        caseSensitive: false);
+                                    if (!regex.hasMatch(v.trim())) return 'Format email invalide';
+                                    return null;
+                                  },
+                                ),
+                              ],
                               const SizedBox(height: 12),
 
                               _DialogField(
@@ -337,9 +374,9 @@ class _ClientsScreenState extends State<ClientsScreen> {
                                             nom: nomController.text.trim().isNotEmpty
                                                 ? nomController.text.trim()
                                                 : clientToEdit?.nom ?? '',
-                                            email: emailController.text.trim().isNotEmpty
-                                                ? emailController.text.trim()
-                                                : clientToEdit?.email ?? '',
+                                            email: isEdit
+                                                ? (clientToEdit?.email ?? '')
+                                                : emailController.text.trim(),
                                             telephone: telController.text.trim().isNotEmpty
                                                 ? telController.text.trim()
                                                 : clientToEdit?.telephone ?? '',
@@ -601,57 +638,33 @@ class _ClientsScreenState extends State<ClientsScreen> {
                   decoration: const BoxDecoration(
                     border: Border(top: BorderSide(color: Color(0xFFE5E7EB))),
                   ),
-                  child: Column(
+                  child: Row(
                     children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton(
-                              onPressed: () => Navigator.pop(dialogContext),
-                              style: OutlinedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(vertical: 11),
-                                side: const BorderSide(color: Color(0xFFD1D5DB)),
-                                shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8)),
-                              ),
-                              child: const Text('Fermer', style: TextStyle(color: kTextSub)),
-                            ),
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(dialogContext),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 11),
+                            side: const BorderSide(color: Color(0xFFD1D5DB)),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8)),
                           ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: () {
-                                Navigator.pop(dialogContext);
-                                showAddClientDialog(clientToEdit: client);
-                              },
-                              icon: const Icon(LucideIcons.pencil, size: 14, color: Colors.white),
-                              label: const Text('Modifier',
-                                  style: TextStyle(
-                                      color: Colors.white, fontWeight: FontWeight.w600)),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: kWarning,
-                                elevation: 0,
-                                padding: const EdgeInsets.symmetric(vertical: 11),
-                                shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8)),
-                              ),
-                            ),
-                          ),
-                        ],
+                          child: const Text('Fermer', style: TextStyle(color: kTextSub)),
+                        ),
                       ),
-                      const SizedBox(height: 10),
-                      SizedBox(
-                        width: double.infinity,
+                      const SizedBox(width: 10),
+                      Expanded(
                         child: ElevatedButton.icon(
                           onPressed: () {
                             Navigator.pop(dialogContext);
-                            showDevisIaDialog(context, clientNom: client.nom);
+                            showAddClientDialog(clientToEdit: client);
                           },
-                          icon: const Icon(LucideIcons.sparkles, size: 14, color: Colors.white),
-                          label: const Text('Générer devis IA',
-                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                          icon: const Icon(LucideIcons.pencil, size: 14, color: Colors.white),
+                          label: const Text('Modifier',
+                              style: TextStyle(
+                                  color: Colors.white, fontWeight: FontWeight.w600)),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF8B5CF6),
+                            backgroundColor: kWarning,
                             elevation: 0,
                             padding: const EdgeInsets.symmetric(vertical: 11),
                             shape: RoundedRectangleBorder(
