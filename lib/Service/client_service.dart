@@ -42,7 +42,15 @@ class ClientService {
     }
   }
 
-// Dans client_service.dart — remplace toute la méthode addClient
+  // ─── VÉRIFIER SI CLIENT EXISTE (par email) ───
+  static Future<bool> clientExisteParEmail(String email) async {
+    final result = await _db
+        .from('clients')
+        .select('id')
+        .ilike('email', email.trim())
+        .limit(1);
+    return (result as List).isNotEmpty;
+  }
 
 static Future<void> addClient(Client client) async {
   try {
@@ -52,7 +60,7 @@ static Future<void> addClient(Client client) async {
     await _db.from('clients').insert(json);
 
     if (client.accesPortail == true && client.email.isNotEmpty) {
-      // 1. Envoie l'invitation Supabase Auth
+      // send-welcome-email gère la suppression + recréation Auth
       await _inviteClient(client.email, client.nom);
 
       final trimEmail = client.email.trim().toLowerCase();
@@ -200,6 +208,53 @@ final acces = (accesAll as List)
   // ─── DELETE CLIENT ──────────────────
   static Future<void> deleteClient(String id) async {
     try {
+      // 1. Récupère l'email et les projets liés au client
+      final clientData = await _db
+          .from('clients')
+          .select('id, email')
+          .eq('id', id)
+          .maybeSingle();
+      final clientEmail = (clientData?['email'] as String? ?? '').trim().toLowerCase();
+
+      final projetsData = await _db
+          .from('projets')
+          .select('id')
+          .eq('client_id', id);
+      final projetIds = (projetsData as List)
+          .map((p) => p['id'] as String)
+          .toList();
+
+      if (projetIds.isNotEmpty) {
+        // 2. Supprime les données liées aux projets (ordre FK)
+        await _db.from('membre_taches').delete().inFilter('projet_id', projetIds);
+        await _db.from('taches').delete().inFilter('projet_id', projetIds);
+        await _db.from('factures').delete().inFilter('projet_id', projetIds);
+        await _db.from('phases').delete().inFilter('projet_id', projetIds);
+        await _db.from('commentaires').delete().inFilter('projet_id', projetIds);
+        await _db.from('documents').delete().inFilter('projet_id', projetIds);
+        await _db.from('actualites_chantier').delete().inFilter('projet_id', projetIds);
+        await _db.from('comptes_rendus').delete().inFilter('projet_id', projetIds);
+        await _db.from('defauts').delete().inFilter('projet_id', projetIds);
+        await _db.from('photos_chantier').delete().inFilter('projet_id', projetIds);
+        await _db.from('project_members').delete().inFilter('project_id', projetIds);
+        await _db.from('project_models').delete().inFilter('project_id', projetIds);
+
+        // 3. Supprime les projets
+        await _db.from('projets').delete().eq('client_id', id);
+      }
+
+      // 4. Supprime tous les accès portail du client (par email)
+      if (clientEmail.isNotEmpty) {
+        await _db
+            .from('client_portal_access')
+            .delete()
+            .eq('client_email', clientEmail);
+
+        // 5. Supprime le compte Auth via Edge Function
+        await _deleteAuthUser(clientEmail);
+      }
+
+      // 6. Supprime le client
       await _db.from('clients').delete().eq('id', id);
     } catch (e) {
       debugPrint("ERROR DELETE CLIENT: $e");
@@ -228,6 +283,23 @@ static Future<void> _inviteClient(String email, String nom) async {
     debugPrint("❌ ERROR: $e");
   }
 }
+  // ─── DELETE AUTH USER ───────────────
+  static Future<void> _deleteAuthUser(String email) async {
+    try {
+      final res = await http.post(
+        Uri.parse("https://ngcnfbbeefsbynknvogm.supabase.co/functions/v1/delete-auth-user"),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer ${SupabaseConfig.client.auth.currentSession?.accessToken ?? ''}",
+        },
+        body: jsonEncode({"email": email}),
+      );
+      debugPrint(res.statusCode == 200 ? "✅ Auth user supprimé" : "❌ delete-auth-user: ${res.body}");
+    } catch (e) {
+      debugPrint("❌ ERROR delete-auth-user: $e");
+    }
+  }
+
   // ─── PASSWORD ───────────────────────
   static String _generateTempPassword(String email) {
     final prefix = email.split('@').first;

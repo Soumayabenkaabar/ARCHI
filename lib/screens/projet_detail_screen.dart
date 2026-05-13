@@ -13508,6 +13508,7 @@ class _Modele3DTabState extends State<_Modele3DTab>
   bool _loading = true;
   bool _uploading = false;
   bool _refreshing = false;
+  bool _dialogActive = false;
   Timer? _refreshTimer;
 
   @override
@@ -13529,8 +13530,10 @@ class _Modele3DTabState extends State<_Modele3DTab>
   }
 
   Future<void> _loadModel() async {
+    if (_dialogActive) return;
     try {
       final m = await Model3DService.getModel(widget.project.id);
+      if (_dialogActive) return;
       setState(() {
         _model = m;
         _loading = false;
@@ -13552,23 +13555,59 @@ class _Modele3DTabState extends State<_Modele3DTab>
       return;
     final file = result.files.first;
     setState(() => _uploading = true);
+    Model3D? uploadedModel;
     try {
       final url = await Model3DService.uploadGlb(
         widget.project.id,
         file.bytes!,
         file.name,
       );
-      final model = await Model3DService.saveModel(widget.project.id, url, []);
-      setState(() {
-        _model = model;
-        _uploading = false;
-      });
+      uploadedModel = await Model3DService.saveModel(widget.project.id, url, []);
+      setState(() => _uploading = false);
     } catch (e) {
       setState(() => _uploading = false);
       if (mounted) _snack(context, 'Erreur upload: $e', kRed);
       return;
     }
-    if (mounted) _snack(context, '✓ Modèle 3D chargé avec succès', kAccent);
+    if (!mounted) return;
+    // Montrer le popup AVANT d'activer le viewer (évite que le WebView bloque les taps)
+    setState(() => _dialogActive = true);
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        content: Row(children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: kAccent.withOpacity(0.12),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.check_circle_outline_rounded, color: kAccent, size: 24),
+          ),
+          const SizedBox(width: 12),
+          const Flexible(
+            child: Text(
+              'Modèle 3D chargé avec succès',
+              style: TextStyle(fontWeight: FontWeight.w500, fontSize: 14),
+            ),
+          ),
+        ]),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('OK', style: TextStyle(color: kAccent, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+    if (mounted) {
+      setState(() {
+        _model = uploadedModel;
+        _dialogActive = false;
+      });
+    }
   }
 
   Future<void> _deleteModel() async {
@@ -13749,18 +13788,20 @@ document.addEventListener('DOMContentLoaded',function(){
                   icon: const Icon(LucideIcons.trash2, size: 16, color: kRed),
                   tooltip: 'Supprimer le modèle',
                   onPressed: () async {
+                    setState(() => _dialogActive = true);
                     final ok = await showDialog<bool>(
                       context: context,
-                      builder: (_) => AlertDialog(
+                      barrierDismissible: false,
+                      builder: (dialogCtx) => AlertDialog(
                         title: const Text('Supprimer le modèle ?'),
                         content: const Text('Cette action est irréversible.'),
                         actions: [
                           TextButton(
-                            onPressed: () => Navigator.pop(context, false),
+                            onPressed: () => Navigator.pop(dialogCtx, false),
                             child: const Text('Annuler'),
                           ),
                           TextButton(
-                            onPressed: () => Navigator.pop(context, true),
+                            onPressed: () => Navigator.pop(dialogCtx, true),
                             child: const Text(
                               'Supprimer',
                               style: TextStyle(color: kRed),
@@ -13769,18 +13810,21 @@ document.addEventListener('DOMContentLoaded',function(){
                         ],
                       ),
                     );
+                    if (mounted) setState(() => _dialogActive = false);
                     if (ok == true) _deleteModel();
                   },
                 ),
               ],
             ),
           ),
-          // Viewer GLB plein écran
+          // Viewer GLB plein écran (masqué pendant les dialogs pour éviter l'interception des taps)
           Expanded(
-            child: Model3DViewerWidget(
-              key: ValueKey(_model!.url),
-              htmlContent: _buildFullViewerHtml(_model!.url),
-            ),
+            child: _dialogActive
+                ? const Center(child: CircularProgressIndicator(color: kAccent))
+                : Model3DViewerWidget(
+                    key: ValueKey(_model!.url),
+                    htmlContent: _buildFullViewerHtml(_model!.url),
+                  ),
           ),
         ],
       );

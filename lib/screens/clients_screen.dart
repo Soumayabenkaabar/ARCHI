@@ -391,7 +391,16 @@ class _ClientsScreenState extends State<ClientsScreen> {
                                             if (!mounted) return;
                                             _snack(screenContext, 'Client modifié avec succès', kAccent);
                                           } else {
-                                            // ── AJOUTER ───────────────────────────
+                                            // ── AJOUTER : vérifier doublon ─────────
+                                            final existe = await ClientService.clientExisteParEmail(client.email);
+                                            if (existe) {
+                                              if (dialogContext.mounted) {
+                                                setStateDialog(() => dialogLoading = false);
+                                              }
+                                              if (!mounted) return;
+                                              _snack(screenContext, 'Un client avec cet email existe déjà.', kRed);
+                                              return;
+                                            }
                                             await ClientService.addClient(client);
                                             if (dialogContext.mounted) Navigator.pop(dialogContext);
                                             await loadClients();

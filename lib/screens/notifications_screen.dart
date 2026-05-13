@@ -209,98 +209,133 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     final lues      = _notifications.where((n) => n.lue).toList();
     final nbNonLues = nonLues.length;
 
-    return Container(
-      color: kBg,
-      child: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: EdgeInsets.fromLTRB(pad, pad, pad, pad + 20),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-
-                if (_refreshing) const LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
-
-                // ── Header ──────────────────────────────────────────────────
-                Row(children: [
-                  const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text('Centre de notifications', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: kTextMain)),
-                    SizedBox(height: 4),
-                    Text('Restez informé des alertes et activités importantes', style: TextStyle(color: kTextSub, fontSize: 13)),
-                  ])),
-                  RotationTransition(
-                    turns: _spinCtrl,
-                    child: IconButton(
-                      onPressed: _refreshing ? null : _load,
-                      tooltip: 'Actualiser',
-                      icon: Icon(
-                        LucideIcons.refreshCw,
-                        size: 18,
-                        color: _refreshing ? kAccent : kTextSub,
+    return Stack(
+      children: [
+        Container(
+          color: kBg,
+          child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // ── Header fixe ───────────────────────────────────────────
+                    Container(
+                      padding: EdgeInsets.fromLTRB(pad, pad, pad, 14),
+                      decoration: const BoxDecoration(
+                        color: kBg,
+                        border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('Notifications',
+                                    style: TextStyle(
+                                        fontSize: isMobile ? 24 : 28,
+                                        fontWeight: FontWeight.w800,
+                                        color: kTextMain)),
+                                const SizedBox(height: 4),
+                                Text('Restez informé des alertes et activités importantes',
+                                    style: TextStyle(
+                                        color: kTextSub,
+                                        fontSize: isMobile ? 12 : 14)),
+                              ],
+                            ),
+                          ),
+                          RotationTransition(
+                            turns: _spinCtrl,
+                            child: IconButton(
+                              onPressed: _refreshing ? null : _load,
+                              tooltip: 'Actualiser',
+                              icon: Icon(LucideIcons.refreshCw, size: 18,
+                                  color: _refreshing ? kAccent : kTextSub),
+                            ),
+                          ),
+                          if (nbNonLues > 0) ...[
+                            OutlinedButton.icon(
+                              onPressed: _markAllRead,
+                              icon: const Icon(LucideIcons.checkCircle, size: 14, color: kAccent),
+                              label: Text(isMobile ? 'Tout lu' : 'Tout marquer comme lu',
+                                  style: const TextStyle(color: kAccent, fontSize: 12, fontWeight: FontWeight.w600)),
+                              style: OutlinedButton.styleFrom(
+                                padding: EdgeInsets.symmetric(horizontal: isMobile ? 10 : 14, vertical: 9),
+                                side: const BorderSide(color: kAccent),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                          ],
+                          OutlinedButton.icon(
+                            onPressed: _notifications.isEmpty ? null : _clearAll,
+                            icon: const Icon(LucideIcons.trash2, size: 14, color: kRed),
+                            label: Text(isMobile ? '' : 'Tout effacer',
+                                style: const TextStyle(color: kRed, fontSize: 12, fontWeight: FontWeight.w600)),
+                            style: OutlinedButton.styleFrom(
+                              padding: EdgeInsets.symmetric(horizontal: isMobile ? 10 : 14, vertical: 9),
+                              side: const BorderSide(color: kRed),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-                  if (nbNonLues > 0) ...[
-                    OutlinedButton.icon(
-                      onPressed: _markAllRead,
-                      icon: const Icon(LucideIcons.checkCircle, size: 14, color: kAccent),
-                      label: Text(isMobile ? 'Tout lu' : 'Tout marquer comme lu', style: const TextStyle(color: kAccent, fontSize: 12, fontWeight: FontWeight.w600)),
-                      style: OutlinedButton.styleFrom(
-                        padding: EdgeInsets.symmetric(horizontal: isMobile ? 10 : 14, vertical: 9),
-                        side: const BorderSide(color: kAccent),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+
+                    // ── Liste défilante ───────────────────────────────────────
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: EdgeInsets.fromLTRB(pad, pad, pad, pad + 20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // ── Non lues ──────────────────────────────────────
+                            if (nonLues.isNotEmpty) ...[
+                              Row(children: [
+                                const Icon(Icons.warning_amber_rounded, color: kRed, size: 18),
+                                const SizedBox(width: 8),
+                                Text('Non lues (${nonLues.length})',
+                                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: kTextMain)),
+                              ]),
+                              const SizedBox(height: 12),
+                              ...nonLues.map((n) => Padding(
+                                padding: const EdgeInsets.only(bottom: 10),
+                                child: _NotifCard(notif: n, onMarkRead: () => _markRead(n.id), onDelete: () => _delete(n.id), onTap: () => _onTap(n)),
+                              )),
+                              const SizedBox(height: 20),
+                            ],
+
+                            // ── Lues ──────────────────────────────────────────
+                            if (lues.isNotEmpty) ...[
+                              Row(children: [
+                                const Icon(Icons.check_circle_outline_rounded, color: kTextSub, size: 18),
+                                const SizedBox(width: 8),
+                                Text('Lues (${lues.length})',
+                                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: kTextMain)),
+                              ]),
+                              const SizedBox(height: 12),
+                              ...lues.map((n) => Padding(
+                                padding: const EdgeInsets.only(bottom: 10),
+                                child: _NotifCard(notif: n, onMarkRead: null, onDelete: () => _delete(n.id), onTap: () => _onTap(n)),
+                              )),
+                            ],
+
+                            // ── Vide ──────────────────────────────────────────
+                            if (_notifications.isEmpty)
+                              const _NotifEmptyState(),
+                          ],
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 8),
                   ],
-                  OutlinedButton.icon(
-                    onPressed: _notifications.isEmpty ? null : _clearAll,
-                    icon: const Icon(LucideIcons.trash2, size: 14, color: kRed),
-                    label: Text(isMobile ? '' : 'Tout effacer', style: const TextStyle(color: kRed, fontSize: 12, fontWeight: FontWeight.w600)),
-                    style: OutlinedButton.styleFrom(
-                      padding: EdgeInsets.symmetric(horizontal: isMobile ? 10 : 14, vertical: 9),
-                      side: const BorderSide(color: kRed),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    ),
-                  ),
-                ]),
-
-                const SizedBox(height: 24),
-
-                const SizedBox(height: 8),
-
-                // ── Non lues ─────────────────────────────────────────────────
-                if (nonLues.isNotEmpty) ...[
-                  Row(children: [
-                    const Icon(Icons.warning_amber_rounded, color: kRed, size: 18),
-                    const SizedBox(width: 8),
-                    Text('Non lues (${nonLues.length})', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: kTextMain)),
-                  ]),
-                  const SizedBox(height: 12),
-                  ...nonLues.map((n) => Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: _NotifCard(notif: n, onMarkRead: () => _markRead(n.id), onDelete: () => _delete(n.id), onTap: () => _onTap(n)),
-                  )),
-                  const SizedBox(height: 20),
-                ],
-
-                // ── Lues ─────────────────────────────────────────────────────
-                if (lues.isNotEmpty) ...[
-                  Row(children: [
-                    const Icon(Icons.check_circle_outline_rounded, color: kTextSub, size: 18),
-                    const SizedBox(width: 8),
-                    Text('Lues (${lues.length})', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: kTextMain)),
-                  ]),
-                  const SizedBox(height: 12),
-                  ...lues.map((n) => Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: _NotifCard(notif: n, onMarkRead: null, onDelete: () => _delete(n.id), onTap: () => _onTap(n)),
-                  )),
-                ],
-
-                // ── Vide ─────────────────────────────────────────────────────
-                if (_notifications.isEmpty)
-                  const _NotifEmptyState(),
-              ]),
-            ),
+                ),
+        ),
+        if (_refreshing) const Positioned(
+          top: 0, left: 0, right: 0,
+          child: LinearProgressIndicator(color: kAccent, minHeight: 2, backgroundColor: Colors.transparent),
+        ),
+      ],
     );
   }
 }
