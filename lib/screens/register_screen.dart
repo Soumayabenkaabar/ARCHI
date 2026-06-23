@@ -26,8 +26,6 @@ class _RegisterScreenState extends State<RegisterScreen>
   bool _loading = false;
   String? _errorMsg;
   bool _emailConflict = false;
-  bool _verificationSent = false;
-  String _verifiedEmail = '';
 
   late AnimationController _anim;
   late Animation<double> _fadeAnim;
@@ -67,7 +65,10 @@ class _RegisterScreenState extends State<RegisterScreen>
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
-    setState(() { _loading = true; _errorMsg = null; });
+    setState(() {
+      _loading = true;
+      _errorMsg = null;
+    });
 
     final result = await AuthService.register(
       nom: _nomCtrl.text,
@@ -82,35 +83,31 @@ class _RegisterScreenState extends State<RegisterScreen>
     setState(() => _loading = false);
 
     if (result.isEmailConflict) {
-      setState(() { _emailConflict = true; _errorMsg = null; });
+      setState(() {
+        _emailConflict = true;
+        _errorMsg = null;
+      });
       return;
     }
 
     if (result.success) {
-      if (result.emailVerificationRequired) {
-        setState(() {
-          _verifiedEmail = _emailCtrl.text.trim();
-          _verificationSent = true;
-        });
-      } else {
-        Navigator.pushReplacementNamed(context, '/home');
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Compte créé avec succès. Connectez-vous.'),
+        ),
+      );
+
+      Navigator.pushReplacementNamed(context, '/login');
     } else {
-      setState(() { _errorMsg = result.error; _emailConflict = false; });
+      setState(() {
+        _errorMsg = result.error;
+        _emailConflict = false;
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_verificationSent) {
-      return Scaffold(
-        backgroundColor: kBg,
-        body: _VerificationNotice(
-          email: _verifiedEmail,
-          onBackToLogin: () => Navigator.pushReplacementNamed(context, '/login'),
-        ),
-      );
-    }
     final isWide = MediaQuery.of(context).size.width > 800;
     return Scaffold(
       backgroundColor: kBg,
@@ -249,9 +246,7 @@ class _RegisterScreenState extends State<RegisterScreen>
             const SizedBox(height: 28),
 
             if (_emailConflict) ...[
-              _EmailConflictBanner(
-                onLogin: () => Navigator.pop(context),
-              ),
+              _EmailConflictBanner(onLogin: () => Navigator.pop(context)),
               const SizedBox(height: 20),
             ] else if (_errorMsg != null) ...[
               _ErrorBanner(message: _errorMsg!),
@@ -284,23 +279,27 @@ class _RegisterScreenState extends State<RegisterScreen>
               prefixIcon: LucideIcons.mail,
               validator: (v) {
                 if (v == null || v.trim().isEmpty) return 'Email requis';
-                final emailRegex = RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$');
-                if (!emailRegex.hasMatch(v.trim())) return 'Adresse email invalide';
+                final emailRegex = RegExp(
+                  r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
+                );
+                if (!emailRegex.hasMatch(v.trim()))
+                  return 'Adresse email invalide';
                 return null;
               },
             ),
             const SizedBox(height: 24),
-
-            const _SectionLabel(label: 'Cabinet (optionnel)'),
+            const _SectionLabel(label: 'Informations du cabinet (optionnel)'),
             const SizedBox(height: 12),
+
             _TwoColumnRow(
               left: _AuthField(
-                label: 'Nom du cabinet',
+                label: 'Nom du cabinet (optionnel)',
                 controller: _cabinetCtrl,
                 prefixIcon: LucideIcons.building2,
               ),
+
               right: _AuthField(
-                label: 'Téléphone',
+                label: 'Téléphone (optionnel)',
                 controller: _telCtrl,
                 keyboardType: TextInputType.number,
                 prefixIcon: LucideIcons.phone,
@@ -309,19 +308,23 @@ class _RegisterScreenState extends State<RegisterScreen>
                   LengthLimitingTextInputFormatter(8),
                 ],
                 validator: (v) {
-                  if (v == null || v.trim().isEmpty) return null;
+                  if (v == null || v.trim().isEmpty)
+                    return null; // champ facultatif
+
                   if (!RegExp(r'^\d{8}$').hasMatch(v.trim())) {
                     return 'Exactement 8 chiffres requis';
                   }
+
                   if (int.parse(v.trim()) <= 20000000) {
                     return 'Numéro invalide (ex: 20 123 456)';
                   }
+
                   return null;
                 },
               ),
             ),
-            const SizedBox(height: 24),
 
+            const SizedBox(height: 24),
             const _SectionLabel(label: 'Mot de passe'),
             const SizedBox(height: 12),
             _AuthField(
@@ -732,7 +735,7 @@ class _Logo extends StatelessWidget {
         child: Icon(
           LucideIcons.building2,
           size: 18,
-          color: dark ? const Color(0xFF0F172A) : Colors.white,
+          color: dark ? const Color(0xFFF5A623) : Colors.white,
         ),
       ),
       const SizedBox(width: 10),
@@ -743,138 +746,6 @@ class _Logo extends StatelessWidget {
           fontWeight: FontWeight.w700,
           color: dark ? Colors.white : kTextMain,
         ),
-      ),
-    ],
-  );
-}
-
-// ── Écran de vérification email ───────────────────────────────────────────────
-class _VerificationNotice extends StatelessWidget {
-  final String email;
-  final VoidCallback onBackToLogin;
-  const _VerificationNotice({required this.email, required this.onBackToLogin});
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 440),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  color: kAccent.withOpacity(0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(LucideIcons.mailCheck, size: 36, color: kAccent),
-              ),
-              const SizedBox(height: 28),
-              const Text(
-                'Vérifiez votre email',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: kTextMain),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Un lien de confirmation a été envoyé à :',
-                style: const TextStyle(fontSize: 14, color: kTextSub),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                decoration: BoxDecoration(
-                  color: kAccent.withOpacity(0.07),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: kAccent.withOpacity(0.2)),
-                ),
-                child: Text(
-                  email,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: kAccent,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                ),
-                child: Column(
-                  children: const [
-                    _StepItem(
-                      icon: LucideIcons.mail,
-                      text: 'Ouvrez votre boîte de réception',
-                    ),
-                    SizedBox(height: 12),
-                    _StepItem(
-                      icon: LucideIcons.mousePointerClick,
-                      text: 'Cliquez sur le lien de confirmation',
-                    ),
-                    SizedBox(height: 12),
-                    _StepItem(
-                      icon: LucideIcons.logIn,
-                      text: 'Connectez-vous avec vos identifiants',
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 32),
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: onBackToLogin,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF0F172A),
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    elevation: 0,
-                  ),
-                  child: const Text(
-                    'Retour à la connexion',
-                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _StepItem extends StatelessWidget {
-  final IconData icon;
-  final String text;
-  const _StepItem({required this.icon, required this.text});
-
-  @override
-  Widget build(BuildContext context) => Row(
-    children: [
-      Container(
-        width: 32,
-        height: 32,
-        decoration: BoxDecoration(
-          color: kAccent.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Icon(icon, size: 15, color: kAccent),
-      ),
-      const SizedBox(width: 12),
-      Expanded(
-        child: Text(text, style: const TextStyle(fontSize: 13, color: kTextSub)),
       ),
     ],
   );

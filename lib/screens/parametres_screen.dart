@@ -220,7 +220,7 @@ class _ParametresScreenState extends State<ParametresScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text('Paramètres', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: kTextMain)),
-                        Text('Configurez votre profil et vos préférences', style: TextStyle(color: kTextSub, fontSize: 12)),
+                        Text('Configurez votre profil ', style: TextStyle(color: kTextSub, fontSize: 12)),
                       ],
                     )),
                   ]),

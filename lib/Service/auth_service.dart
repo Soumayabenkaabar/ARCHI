@@ -85,8 +85,7 @@ class AuthService {
       await _saveProfileLocally(_currentUser!);
 
       // Force email verification: always sign out and require confirmation
-      await _sb.auth.signOut();
-      return AuthResult.pendingVerification(_currentUser!);
+   return AuthResult.success(_currentUser!);
     } on AuthException catch (e) {
       if (e.message.contains('User already registered') ||
           e.message.contains('already been registered')) {
@@ -99,42 +98,34 @@ class AuthService {
   }
 
   // ── Connexion ─────────────────────────────────────────────────────────────
-  static Future<AuthResult> login({
-    required String email,
-    required String password,
-  }) async {
-    try {
-      final res = await _sb.auth.signInWithPassword(
-        email: email.trim(),
-        password: password,
+ static Future<AuthResult> login({
+  required String email,
+  required String password,
+}) async {
+  try {
+    final res = await _sb.auth.signInWithPassword(
+      email: email.trim(),
+      password: password,
+    );
+
+    if (res.user == null) {
+      return AuthResult.failure(
+        'Connexion échouée. Vérifiez vos identifiants.',
       );
-
-      if (res.user == null) {
-        return AuthResult.failure(
-          'Connexion échouée. Vérifiez vos identifiants.',
-        );
-      }
-
-      if (res.user!.emailConfirmedAt == null) {
-        await _sb.auth.signOut();
-        return AuthResult.failure(
-          'Veuillez confirmer votre email avant de vous connecter.',
-        );
-      }
-
-      await _loadProfile(res.user!);
-
-      if (_currentUser == null) {
-        return AuthResult.failure('Profil introuvable.');
-      }
-
-      return AuthResult.success(_currentUser!);
-    } on AuthException catch (e) {
-      return AuthResult.failure(_translateError(e.message));
-    } catch (e) {
-      return AuthResult.failure('Erreur inattendue : $e');
     }
+
+    await _loadProfile(res.user!);
+
+    if (_currentUser == null) {
+      return AuthResult.failure('Profil introuvable.');
+    }
+
+    return AuthResult.success(_currentUser!);
+  } on AuthException catch (e) {
+return AuthResult.failure(e.message);  } catch (e) {
+    return AuthResult.failure('Erreur inattendue : $e');
   }
+}
 
   // ── Déconnexion ───────────────────────────────────────────────────────────
   static Future<void> logout() async {

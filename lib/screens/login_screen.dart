@@ -463,7 +463,7 @@ class _Logo extends StatelessWidget {
         child: Icon(
           LucideIcons.building2,
           size: 18,
-          color: dark ? const Color(0xFF0F172A) : Colors.white,
+          color: dark ? const Color(0xFFF5A623) : Colors.white,
         ),
       ),
       const SizedBox(width: 10),

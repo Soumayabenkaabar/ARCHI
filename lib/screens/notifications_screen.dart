@@ -447,32 +447,7 @@ class _NotifEmptyState extends StatelessWidget {
                   ],
                 ),
 
-                const SizedBox(height: 32),
-
-                // Badge "tout est à jour"
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF10B981).withOpacity(0.07),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFF10B981).withOpacity(0.2)),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(LucideIcons.checkCircle, size: 16, color: Color(0xFF10B981)),
-                      SizedBox(width: 8),
-                      Text(
-                        'Tout est à jour — aucune alerte en attente',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Color(0xFF059669),
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+               
               ],
             ),
           ),
